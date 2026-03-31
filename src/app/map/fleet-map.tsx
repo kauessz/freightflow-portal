@@ -73,6 +73,37 @@ function formatDate(iso: string): string {
   }
 }
 
+interface LastPositionInfo {
+  label: string;
+  isOld: boolean; // > 2 hours
+}
+
+function lastPositionAgo(timestamp: string | null): LastPositionInfo {
+  if (!timestamp) return { label: "Unknown", isOld: false };
+  try {
+    const diffMs = Date.now() - new Date(timestamp).getTime();
+    const diffMins = Math.floor(diffMs / 60_000);
+    const diffHours = Math.floor(diffMs / 3_600_000);
+    let label: string;
+    if (diffMins < 1) label = "just now";
+    else if (diffMins < 60) label = `${diffMins} min ago`;
+    else label = `${diffHours}h ${diffMins % 60}min ago`;
+    return { label, isOld: diffHours >= 2 };
+  } catch {
+    return { label: "Unknown", isOld: false };
+  }
+}
+
+function buildPositionBadge(estimated: boolean, isOld: boolean): string {
+  if (estimated) {
+    return `<div style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-top:6px;display:inline-block;">&#9888; Position estimated</div>`;
+  }
+  if (isOld) {
+    return `<div style="background:#f97316;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-top:6px;display:inline-block;">&#9888; Position may be outdated</div>`;
+  }
+  return "";
+}
+
 function addMarkersToMap(map: L.Map, voyages: VoyageTracking[]) {
   // Clear existing markers and lines
   map.eachLayer((layer) => {
@@ -96,37 +127,44 @@ function addMarkersToMap(map: L.Map, voyages: VoyageTracking[]) {
 
     bounds.push(vesselLatLng, originLatLng, destLatLng);
 
+    // Compute last-position info
+    const posTimestamp = (pos as { timestamp?: string }).timestamp ?? null;
+    const lastPos = lastPositionAgo(posTimestamp);
+    const lastPosColor = lastPos.isOld ? "#f97316" : "#6b7280";
+    const positionBadge = buildPositionBadge(pos.estimated, lastPos.isOld);
+
     // Vessel marker
     const vesselIcon = createVesselIcon(pos.estimated);
-    const estimatedBadge = pos.estimated
-      ? `<div style="background:#f59e0b;color:#fff;padding:2px 8px;border-radius:4px;font-size:11px;font-weight:600;margin-top:6px;display:inline-block;">⚠ Position estimated</div>`
-      : "";
 
-    const popupContent = `
-      <div style="min-width:220px;font-family:system-ui,sans-serif;">
-        <div style="font-weight:700;font-size:14px;margin-bottom:4px;">${v.vesselName}</div>
-        <div style="color:#6b7280;font-size:12px;margin-bottom:8px;">IMO ${v.vesselImo} · ${v.voyageNumber}</div>
-        <div style="border-top:1px solid #e5e7eb;padding-top:8px;font-size:13px;">
-          <div style="margin-bottom:4px;">
-            <span style="color:#6b7280;">Route:</span>
-            <strong>${v.originPortName}</strong> → <strong>${v.destinationPortName}</strong>
-          </div>
-          <div style="margin-bottom:4px;">
-            <span style="color:#6b7280;">Speed:</span> ${formatSpeed(pos.speed)}
-          </div>
-          <div style="margin-bottom:4px;">
-            <span style="color:#6b7280;">Course:</span> ${pos.course !== null ? pos.course + "°" : "N/A"}
-          </div>
-          <div style="margin-bottom:4px;">
-            <span style="color:#6b7280;">ETA:</span> ${formatDate(v.eta)}
-          </div>
-          <div style="margin-bottom:2px;">
-            <span style="color:#6b7280;">Status:</span> ${v.status.replace(/_/g, " ")}
-          </div>
-          ${estimatedBadge}
-        </div>
-      </div>
-    `;
+    const popupContent = [
+      '<div style="min-width:220px;font-family:system-ui,sans-serif;">',
+      '  <div style="font-weight:700;font-size:14px;margin-bottom:4px;">' + v.vesselName + "</div>",
+      '  <div style="color:#6b7280;font-size:12px;margin-bottom:8px;">IMO ' + v.vesselImo + " \u00b7 " + v.voyageNumber + "</div>",
+      '  <div style="border-top:1px solid #e5e7eb;padding-top:8px;font-size:13px;">',
+      '    <div style="margin-bottom:4px;">',
+      '      <span style="color:#6b7280;">Route:</span>',
+      "      <strong>" + v.originPortName + "</strong> &rarr; <strong>" + v.destinationPortName + "</strong>",
+      "    </div>",
+      '    <div style="margin-bottom:4px;">',
+      '      <span style="color:#6b7280;">Speed:</span> ' + formatSpeed(pos.speed),
+      "    </div>",
+      '    <div style="margin-bottom:4px;">',
+      '      <span style="color:#6b7280;">Course:</span> ' + (pos.course !== null ? pos.course + "&deg;" : "N/A"),
+      "    </div>",
+      '    <div style="margin-bottom:4px;">',
+      '      <span style="color:#6b7280;">ETA:</span> ' + formatDate(v.eta),
+      "    </div>",
+      '    <div style="margin-bottom:4px;">',
+      '      <span style="color:#6b7280;">Status:</span> ' + v.status.replace(/_/g, " "),
+      "    </div>",
+      '    <div style="margin-bottom:2px;">',
+      '      <span style="color:#6b7280;">Last position:</span>',
+      '      <span style="color:' + lastPosColor + ';font-weight:500;"> ' + lastPos.label + "</span>",
+      "    </div>",
+      positionBadge,
+      "  </div>",
+      "</div>",
+    ].join("\n");
 
     L.marker(vesselLatLng, { icon: vesselIcon })
       .addTo(map)
@@ -136,20 +174,20 @@ function addMarkersToMap(map: L.Map, voyages: VoyageTracking[]) {
     L.marker(originLatLng, { icon: portIcon })
       .addTo(map)
       .bindPopup(
-        `<div style="font-family:system-ui,sans-serif;">
-          <strong>${v.originPortName}</strong><br/>
-          <span style="color:#6b7280;font-size:12px;">${v.originPortUnlocode} · Origin</span>
-        </div>`
+        '<div style="font-family:system-ui,sans-serif;">' +
+          "<strong>" + v.originPortName + "</strong><br/>" +
+          '<span style="color:#6b7280;font-size:12px;">' + v.originPortUnlocode + " \u00b7 Origin</span>" +
+          "</div>"
       );
 
     // Destination port marker
     L.marker(destLatLng, { icon: portIcon })
       .addTo(map)
       .bindPopup(
-        `<div style="font-family:system-ui,sans-serif;">
-          <strong>${v.destinationPortName}</strong><br/>
-          <span style="color:#6b7280;font-size:12px;">${v.destinationPortUnlocode} · Destination</span>
-        </div>`
+        '<div style="font-family:system-ui,sans-serif;">' +
+          "<strong>" + v.destinationPortName + "</strong><br/>" +
+          '<span style="color:#6b7280;font-size:12px;">' + v.destinationPortUnlocode + " \u00b7 Destination</span>" +
+          "</div>"
       );
 
     // Dashed route line (origin → destination)
