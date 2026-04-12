@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useRef } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import dynamic from "next/dynamic";
 import {
@@ -8,11 +8,11 @@ import {
   Loader2,
   ArrowLeft,
   AlertCircle,
+  AlertTriangle,
   RefreshCw,
-  CheckCircle,
 } from "lucide-react";
 import api, { isAuthenticated } from "@/lib/api";
-import { VoyageTracking, PageResponse } from "@/types";
+import { VoyageTracking, PageResponse, AisPosition, Shipment } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 
@@ -26,30 +26,108 @@ interface VoyageListItem {
   status: string;
   vesselName: string;
   vesselImo: string;
+  carrier?: string | null;
 }
 
-const REFRESH_INTERVAL = 60; // seconds
+interface TrackingLoadIssue {
+  voyageId: string;
+  voyageNumber: string;
+  vesselName: string;
+  message: string;
+}
+
+type ShipmentScope = "all" | "mine";
+
+function normalizePosition(position: AisPosition | null | undefined): AisPosition | null {
+  if (!position) return null;
+
+  const lastUpdate = position.lastUpdate ?? position.timestamp ?? null;
+  const positionEstimated = position.positionEstimated ?? position.estimated ?? false;
+  const positionSource =
+    position.positionSource ??
+    (positionEstimated ? "ESTIMATED" : lastUpdate ? "LIVE_AIS" : "UNAVAILABLE");
+
+  return {
+    ...position,
+    latitude: position.latitude ?? null,
+    longitude: position.longitude ?? null,
+    status: position.status ?? null,
+    lastUpdate,
+    positionSource,
+    positionEstimated,
+  };
+}
+
+function normalizeTracking(
+  tracking: VoyageTracking,
+  voyage: VoyageListItem
+): VoyageTracking {
+  return {
+    ...tracking,
+    carrier: tracking.carrier ?? voyage.carrier ?? null,
+    vesselPosition: normalizePosition(tracking.vesselPosition),
+  };
+}
+
+function hasCoordinates(position: AisPosition | null | undefined) {
+  return position?.latitude != null && position?.longitude != null;
+}
+
+function getVoyageShipmentKey(voyage: Pick<VoyageTracking, "voyageNumber" | "vesselName">) {
+  return `${voyage.voyageNumber}::${voyage.vesselName}`.toUpperCase();
+}
+
+function groupShipmentsByVoyage(shipments: Shipment[]) {
+  return shipments.reduce<Record<string, Shipment[]>>((acc, shipment) => {
+    const key = getVoyageShipmentKey(shipment);
+    if (!acc[key]) acc[key] = [];
+    acc[key].push(shipment);
+    return acc;
+  }, {});
+}
+
+async function fetchAllShipments() {
+  const size = 100;
+  let page = 0;
+  let totalPages = 1;
+  const shipments: Shipment[] = [];
+
+  while (page < totalPages) {
+    const response = await api.get<PageResponse<Shipment>>("/shipments", {
+      params: { page, size },
+    });
+    shipments.push(...(response.data?.data || []));
+    totalPages = response.data?.meta?.totalPages || 1;
+    page += 1;
+  }
+
+  return shipments;
+}
 
 export default function MapPage() {
   const router = useRouter();
 
   const [mounted, setMounted] = useState(false);
+  const [activeVoyageCount, setActiveVoyageCount] = useState(0);
   const [trackingData, setTrackingData] = useState<VoyageTracking[]>([]);
+  const [trackingIssues, setTrackingIssues] = useState<TrackingLoadIssue[]>([]);
+  const [shipmentsByVoyage, setShipmentsByVoyage] = useState<Record<string, Shipment[]>>({});
+  const [shipmentsLoading, setShipmentsLoading] = useState(false);
+  const [shipmentsError, setShipmentsError] = useState<string | null>(null);
+  const [shipmentScope, setShipmentScope] = useState<ShipmentScope>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  // Auto-refresh state
-  const [countdown, setCountdown] = useState(REFRESH_INTERVAL);
-  const [justUpdated, setJustUpdated] = useState(false);
   const [refreshing, setRefreshing] = useState(false);
 
-  // Keep stable ref to avoid stale closure in interval
-  const fetchRef = useRef<((showSpinner: boolean) => Promise<void>) | null>(null);
+  // FIX 2: replaced countdown + auto-refresh with a simple "last updated" timestamp
+  const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
 
   const fetchFleetPositions = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     else setRefreshing(true);
+    setShipmentsLoading(true);
     setError(null);
+    setShipmentsError(null);
 
     try {
       // 1. Get all voyages
@@ -63,44 +141,92 @@ export default function MapPage() {
       const activeVoyages = voyages.filter(
         (v) => v.status === "IN_TRANSIT" || v.status === "DEPARTED"
       );
+      setActiveVoyageCount(activeVoyages.length);
 
       if (activeVoyages.length === 0) {
         setTrackingData([]);
+        setTrackingIssues([]);
+        setShipmentsByVoyage({});
+        setShipmentsError(null);
+        setLastUpdatedAt(new Date());
         return;
       }
 
+      const shipmentsPromise = fetchAllShipments();
+
       // 3. Fetch tracking data for each active voyage (in parallel)
-      const trackingPromises = activeVoyages.map((v) =>
-        api
-          .get<VoyageTracking>(`/voyages/${v.id}/tracking`)
-          .then((res) => res.data)
-          .catch(() => null)
-      );
+      const trackingPromises = activeVoyages.map(async (voyage) => {
+        try {
+          const res = await api.get<VoyageTracking>(`/voyages/${voyage.id}/tracking`);
+          return {
+            tracking: normalizeTracking(res.data, voyage),
+            issue: null,
+          };
+        } catch {
+          return {
+            tracking: null,
+            issue: {
+              voyageId: voyage.id,
+              voyageNumber: voyage.voyageNumber,
+              vesselName: voyage.vesselName,
+              message: "Tracking is temporarily unavailable for this voyage.",
+            } satisfies TrackingLoadIssue,
+          };
+        }
+      });
 
-      const results = await Promise.all(trackingPromises);
-      const validResults = results.filter((r): r is VoyageTracking => r !== null);
+      const [results, shipmentsResult] = await Promise.all([
+        Promise.all(trackingPromises),
+        shipmentsPromise
+          .then((shipments) => ({ shipments, error: null }))
+          .catch(() => ({
+            shipments: [] as Shipment[],
+            error: "Shipment overlays could not be loaded for this map refresh.",
+          })),
+      ]);
+      const validResults = results
+        .map((result) => result.tracking)
+        .filter((tracking): tracking is VoyageTracking => tracking !== null);
+      const loadIssues = results
+        .map((result) => result.issue)
+        .filter((issue): issue is TrackingLoadIssue => issue !== null);
 
-      setTrackingData(validResults);
+      // FIX 1: deduplicate by vesselImo — same vessel can appear in multiple active
+      // voyages (e.g. one DEPARTED + one IN_TRANSIT), producing two markers at the
+      // same coordinates and showing a cluster count of "2" for a single vessel.
+      // Prefer the entry with actual coordinates when the same vessel appears twice.
+      const uniqueByImo = new Map<string, VoyageTracking>();
+      validResults.forEach((tracking) => {
+        const current = uniqueByImo.get(tracking.vesselImo);
+        if (!current) {
+          uniqueByImo.set(tracking.vesselImo, tracking);
+          return;
+        }
 
-      // Flash "Updated just now" for 3 seconds
-      if (!showSpinner) {
-        setJustUpdated(true);
-        setTimeout(() => setJustUpdated(false), 3000);
-      }
+        const currentHasCoordinates = hasCoordinates(current.vesselPosition);
+        const nextHasCoordinates = hasCoordinates(tracking.vesselPosition);
+        if (!currentHasCoordinates && nextHasCoordinates) {
+          uniqueByImo.set(tracking.vesselImo, tracking);
+        }
+      });
+
+      const uniqueResults = Array.from(uniqueByImo.values());
+
+      setTrackingData(uniqueResults);
+      setTrackingIssues(loadIssues);
+      setShipmentsByVoyage(groupShipmentsByVoyage(shipmentsResult.shipments));
+      setShipmentsError(shipmentsResult.error);
+      setLastUpdatedAt(new Date());
     } catch {
       setError("Failed to load fleet positions. Please try again.");
     } finally {
       setLoading(false);
       setRefreshing(false);
+      setShipmentsLoading(false);
     }
   }, []);
 
-  // Keep ref in sync so the interval always calls the latest version
-  useEffect(() => {
-    fetchRef.current = fetchFleetPositions;
-  }, [fetchFleetPositions]);
-
-  // Initial load
+  // Initial load — no auto-refresh interval (removed to avoid unnecessary Railway quota usage)
   useEffect(() => {
     setMounted(true);
     if (!isAuthenticated()) {
@@ -110,28 +236,23 @@ export default function MapPage() {
     fetchFleetPositions(true);
   }, [router, fetchFleetPositions]);
 
-  // Countdown + auto-refresh ticker (only runs after initial load)
-  useEffect(() => {
-    if (!mounted || loading) return;
-
-    const tick = setInterval(() => {
-      setCountdown((prev) => {
-        if (prev <= 1) {
-          // Trigger background refresh
-          fetchRef.current?.(false);
-          return REFRESH_INTERVAL;
-        }
-        return prev - 1;
-      });
-    }, 1000);
-
-    return () => clearInterval(tick);
-  }, [mounted, loading]);
-
   function handleManualRefresh() {
-    setCountdown(REFRESH_INTERVAL);
     fetchFleetPositions(false);
   }
+
+  function fmtTime(date: Date) {
+    return date.toLocaleTimeString("en-US", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+  }
+
+  const positionedVoyages = trackingData.filter((voyage) =>
+    hasCoordinates(voyage.vesselPosition)
+  ).length;
+  const unavailablePositions = trackingData.length - positionedVoyages;
+  const degradedCount = unavailablePositions + trackingIssues.length + (shipmentsError ? 1 : 0);
 
   if (!mounted) {
     return (
@@ -140,9 +261,6 @@ export default function MapPage() {
       </div>
     );
   }
-
-  // Progress bar width: from 100% (60s) down to 0% (0s)
-  const progressPct = (countdown / REFRESH_INTERVAL) * 100;
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
@@ -163,24 +281,32 @@ export default function MapPage() {
           {/* Right: vessel count + refresh controls + back */}
           <div className="flex items-center gap-3">
             <Badge className="bg-blue-100 text-blue-700 border-blue-300">
-              {trackingData.length} active vessel
-              {trackingData.length !== 1 ? "s" : ""}
+              {positionedVoyages} tracked vessel
+              {positionedVoyages !== 1 ? "s" : ""}
             </Badge>
 
-            {/* Refresh status / countdown */}
+            {!loading && activeVoyageCount > 0 && (
+              <Badge className="bg-slate-100 text-slate-700 border-slate-300">
+                {activeVoyageCount} active voyage
+                {activeVoyageCount !== 1 ? "s" : ""}
+              </Badge>
+            )}
+
+            {!loading && degradedCount > 0 && (
+              <Badge className="bg-amber-100 text-amber-800 border-amber-300">
+                {degradedCount} degraded
+              </Badge>
+            )}
+
+            {/* FIX 2: static "Last updated" instead of countdown */}
             {!loading && (
               <div className="hidden sm:flex items-center gap-2">
-                {justUpdated ? (
-                  <span className="flex items-center gap-1 text-xs text-emerald-600 font-medium">
-                    <CheckCircle className="h-3.5 w-3.5" />
-                    Updated just now
-                  </span>
-                ) : (
+                {lastUpdatedAt && (
                   <span className="flex items-center gap-1 text-xs text-muted-foreground">
                     <RefreshCw
                       className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
                     />
-                    Updating in {countdown}s
+                    Last updated: {fmtTime(lastUpdatedAt)}
                   </span>
                 )}
 
@@ -210,19 +336,6 @@ export default function MapPage() {
             </Button>
           </div>
         </div>
-
-        {/* ── Progress bar (depletes over 60s) ── */}
-        {!loading && (
-          <div className="relative h-0.5 w-full bg-border overflow-hidden">
-            <div
-              className="absolute left-0 top-0 h-full bg-primary"
-              style={{
-                width: `${progressPct}%`,
-                transition: "width 1s linear",
-              }}
-            />
-          </div>
-        )}
       </header>
 
       {/* ── Error ── */}
@@ -239,6 +352,36 @@ export default function MapPage() {
             >
               Retry
             </Button>
+          </div>
+        </div>
+      )}
+
+      {!loading && degradedCount > 0 && (
+        <div className="container mx-auto px-4 pt-4">
+          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+            <div className="space-y-1">
+              <p className="text-sm font-medium">
+                Fleet data loaded with degraded coverage.
+              </p>
+              <p className="text-sm">
+                {trackingIssues.length > 0 &&
+                  `${trackingIssues.length} voyage${trackingIssues.length !== 1 ? "s" : ""} could not load tracking.`}{" "}
+                {unavailablePositions > 0 &&
+                  `${unavailablePositions} vessel${unavailablePositions !== 1 ? "s" : ""} loaded without a usable position.`}
+                {shipmentsError && ` Shipment overlays are unavailable for this refresh.`}
+              </p>
+              {trackingIssues.length > 0 && (
+                <p className="text-xs text-amber-800">
+                  Affected voyages:{" "}
+                  {trackingIssues
+                    .slice(0, 3)
+                    .map((issue) => issue.voyageNumber)
+                    .join(", ")}
+                  {trackingIssues.length > 3 ? "..." : ""}
+                </p>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -261,7 +404,16 @@ export default function MapPage() {
           className="flex-1 relative"
           style={{ minHeight: "calc(100vh - 68px)" }}
         >
-          <FleetMap voyages={trackingData} />
+          <FleetMap
+            voyages={trackingData}
+            loadIssues={trackingIssues}
+            activeVoyageCount={activeVoyageCount}
+            shipmentsByVoyage={shipmentsByVoyage}
+            shipmentsLoading={shipmentsLoading}
+            shipmentsError={shipmentsError}
+            shipmentScope={shipmentScope}
+            onShipmentScopeChange={setShipmentScope}
+          />
         </div>
       )}
     </div>

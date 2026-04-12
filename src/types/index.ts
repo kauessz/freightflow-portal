@@ -5,15 +5,24 @@ export interface LoginRequest {
   password: string;
 }
 
-export interface AuthResponse {
-  accessToken: string;
-  refreshToken: string;
-  userId: string;
-  email: string;
+export interface AuthUserInfo {
+  id: string;
   name: string;
+  email: string;
   role: string;
   tenantId: string;
   tenantName: string;
+  customerId: string | null;
+  customerName: string | null;
+  active: boolean;
+}
+
+export interface AuthResponse {
+  accessToken: string;
+  refreshToken: string;
+  tokenType: string;
+  expiresIn: number;
+  user: AuthUserInfo;
 }
 
 // ==================== Shipment ====================
@@ -36,20 +45,59 @@ export type ContainerType =
   | "REEFER20"
   | "REEFER40";
 
-// Matches ShipmentResponse.java (flat DTO)
+export type DocumentStatus = "PENDING" | "PARTIALLY_RECEIVED" | "COMPLETE";
+export type CustomsStatus = "NOT_STARTED" | "IN_PROGRESS" | "CLEARED" | "HOLD";
+export type RiskLevel = "LOW" | "MEDIUM" | "HIGH" | "CRITICAL";
+
+// Matches ShipmentResponse.java
 export interface Shipment {
   id: string;
   booking: string;
+  // Documentos
+  houseBl: string | null;
+  masterBl: string | null;
+  customerReference: string | null;
+  // Container
   containerNumber: string | null;
   containerType: ContainerType | null;
+  containerSizeFt: number | null;
+  containerIsoCode: string | null;
+  grossWeightKg: number | null;
+  netWeightKg: number | null;
+  volumeCbm: number | null;
+  packages: number | null;
+  packageType: string | null;
+  // Status
   status: ShipmentStatus;
+  documentStatus: DocumentStatus;
+  customsStatus: CustomsStatus;
+  riskLevel: RiskLevel;
+  delayDays: number;
+  // Portos
   originPortName: string;
   originPortUnlocode: string;
   destinationPortName: string;
   destinationPortUnlocode: string;
+  transshipmentPortName: string | null;
+  transshipmentPortUnlocode: string | null;
+  // Partes
+  shipper: string | null;
+  consignee: string | null;
+  notifyParty: string | null;
+  operatorName: string | null;
+  // Voyage
   vesselName: string;
   voyageNumber: string;
+  carrier: string;
+  serviceLane: string | null;
   eta: string;
+  // Comercial
+  incoterm: string | null;
+  freightTerm: string | null;
+  cargoDescription: string | null;
+  // Misc
+  vesselSourceUrl: string | null;
+  notes: string | null;
   createdAt: string;
   updatedAt: string;
 }
@@ -87,7 +135,7 @@ export interface TrackingEvent {
 
 // ==================== Tracking ====================
 
-// Matches TrackingResponse.java (flat DTO)
+// Matches TrackingResponse.java
 export interface TrackingResponse {
   booking: string;
   containerNumber: string | null;
@@ -100,12 +148,20 @@ export interface TrackingResponse {
   destinationPortUnlocode: string;
   etd: string;
   eta: string;
+  // Campos operacionais
+  houseBl: string | null;
+  masterBl: string | null;
+  incoterm: string | null;
+  cargoDescription: string | null;
+  documentStatus: DocumentStatus;
+  customsStatus: CustomsStatus;
+  riskLevel: RiskLevel;
+  delayDays: number;
   events: TrackingEvent[];
 }
 
 // ==================== Pagination ====================
 
-// Matches PageResponse.java { data, meta }
 export interface PageMeta {
   total: number;
   page: number;
@@ -124,6 +180,8 @@ export interface ApiError {
   statusCode: number;
   error: string;
   message: string;
+  detail?: string;
+  title?: string;
 }
 
 // ==================== Create Shipment ====================
@@ -162,15 +220,25 @@ export interface PortOption {
 
 // ==================== AIS / Vessel Position ====================
 
+export type PositionSource =
+  | "LIVE_AIS"
+  | "CACHED_AIS"
+  | "ESTIMATED"
+  | "UNAVAILABLE"
+  | string;
+
 export interface AisPosition {
   imo: string | null;
-  latitude: number;
-  longitude: number;
+  latitude: number | null;
+  longitude: number | null;
   speed: number | null;
   course: number | null;
-  status: string;
-  timestamp: string;
-  estimated: boolean;
+  status: string | null;
+  lastUpdate: string | null;
+  positionSource: PositionSource | null;
+  positionEstimated?: boolean | null;
+  timestamp?: string | null;
+  estimated?: boolean | null;
 }
 
 export interface VoyageTracking {
@@ -179,6 +247,7 @@ export interface VoyageTracking {
   status: string;
   vesselName: string;
   vesselImo: string;
+  carrier: string | null;
   originPortName: string;
   originPortUnlocode: string;
   originLat: number;
@@ -189,5 +258,5 @@ export interface VoyageTracking {
   destinationLon: number;
   etd: string;
   eta: string;
-  vesselPosition: AisPosition;
+  vesselPosition: AisPosition | null;
 }

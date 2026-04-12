@@ -12,7 +12,6 @@ import {
   Loader2,
   Package,
   AlertCircle,
-  RefreshCw,
   ExternalLink,
   Plus,
   X,
@@ -20,6 +19,9 @@ import {
   Map,
   CheckCircle,
   AlertTriangle,
+  FileText,
+  Users,
+  Building2,
 } from "lucide-react";
 import api, { getStoredUser, clearAuth, isAuthenticated } from "@/lib/api";
 import {
@@ -58,12 +60,14 @@ const STATUSES: { value: string; label: string }[] = [
   { value: "CANCELLED", label: "Cancelled" },
 ];
 
-const ORIGINS: { value: string; label: string }[] = [
-  { value: "", label: "All origins" },
-  { value: "BRSSZ", label: "BRSSZ — Santos" },
-  { value: "ARBUE", label: "ARBUE — Buenos Aires" },
-  { value: "NLRTM", label: "NLRTM — Rotterdam" },
-  { value: "SGSIN", label: "SGSIN — Singapore" },
+const CARRIERS: { value: string; label: string }[] = [
+  { value: "", label: "All carriers" },
+  { value: "CMA CGM", label: "CMA CGM" },
+  { value: "HMM", label: "HMM" },
+  { value: "Log-In", label: "Log-In" },
+  { value: "Maersk", label: "Maersk" },
+  { value: "MSC", label: "MSC" },
+  { value: "ONE", label: "ONE" },
 ];
 
 const CONTAINER_TYPES: { value: ContainerType; label: string }[] = [
@@ -75,6 +79,43 @@ const CONTAINER_TYPES: { value: ContainerType; label: string }[] = [
 ];
 
 const PAGE_SIZE = 20;
+
+function docStatusBadge(status: string | null) {
+  switch (status) {
+    case "COMPLETE":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Complete</span>;
+    case "PARTIALLY_RECEIVED":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">Partial</span>;
+    default:
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Pending</span>;
+  }
+}
+
+function customsBadge(status: string | null) {
+  switch (status) {
+    case "CLEARED":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-green-100 text-green-700">Cleared</span>;
+    case "IN_PROGRESS":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700">In Progress</span>;
+    case "HOLD":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-100 text-red-700">Hold</span>;
+    default:
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-600">Not Started</span>;
+  }
+}
+
+function riskBadge(level: string | null) {
+  switch (level) {
+    case "CRITICAL":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-red-200 text-red-800 font-semibold">CRITICAL</span>;
+    case "HIGH":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-orange-100 text-orange-700">HIGH</span>;
+    case "MEDIUM":
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-yellow-100 text-yellow-700">MEDIUM</span>;
+    default:
+      return <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-500">LOW</span>;
+  }
+}
 
 export default function DashboardPage() {
   const router = useRouter();
@@ -92,6 +133,7 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState("");
   const [originFilter, setOriginFilter] = useState("");
   const [vesselFilter, setVesselFilter] = useState("");
+  const [carrierFilter, setCarrierFilter] = useState("");
   const [page, setPage] = useState(0);
 
   // New Shipment modal
@@ -177,10 +219,11 @@ export default function DashboardPage() {
     setStatusFilter("");
     setOriginFilter("");
     setVesselFilter("");
+    setCarrierFilter("");
     setPage(0);
   }
 
-  const hasActiveFilters = !!(search || statusFilter || originFilter || vesselFilter);
+  const hasActiveFilters = !!(search || statusFilter || originFilter || vesselFilter || carrierFilter);
 
   async function openModal() {
     setShowModal(true);
@@ -240,7 +283,7 @@ export default function DashboardPage() {
     }
   }
 
-  // Client-side filters (origin and vessel)
+  // Client-side filters
   let data = shipments?.data || [];
   if (originFilter) {
     data = data.filter((s) => s.originPortUnlocode === originFilter);
@@ -249,6 +292,9 @@ export default function DashboardPage() {
     data = data.filter((s) =>
       s.vesselName.toLowerCase().includes(vesselFilter.toLowerCase())
     );
+  }
+  if (carrierFilter) {
+    data = data.filter((s) => s.carrier === carrierFilter);
   }
 
   const meta = shipments?.meta;
@@ -281,11 +327,30 @@ export default function DashboardPage() {
               rel="noopener noreferrer"
               className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden sm:inline"
             >
-              Track a Shipment
+              Track
             </a>
+            {/* Role-based links */}
+            {user && (user as any).role !== "CLIENT" && (
+              <a
+                href="/dashboard/customers"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden md:inline-flex items-center gap-1"
+              >
+                <Building2 className="h-4 w-4" />
+                Customers
+              </a>
+            )}
+            {user && (user as any).role === "ADMIN" && (
+              <a
+                href="/dashboard/users"
+                className="text-sm text-muted-foreground hover:text-foreground transition-colors hidden md:inline-flex items-center gap-1"
+              >
+                <Users className="h-4 w-4" />
+                Users
+              </a>
+            )}
             {user && (
-              <span className="text-sm text-muted-foreground hidden md:inline">
-                {user.name} &middot; {user.tenantName}
+              <span className="text-sm text-muted-foreground hidden lg:inline">
+                {(user as any).name} &middot; <span className="text-xs font-medium">{(user as any).role}</span>
               </span>
             )}
             <Button variant="ghost" size="sm" onClick={handleLogout}>
@@ -352,15 +417,12 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
 
-            {/* Delayed — clicável */}
+            {/* Delayed — clicável, filtra delay_days > 0 */}
             <Card
-              className={`cursor-pointer transition-colors hover:bg-red-50 ${
-                statusFilter === "IN_TRANSIT" && search === "__delayed__"
-                  ? "ring-2 ring-red-400"
-                  : ""
-              }`}
+              className="cursor-pointer transition-colors hover:bg-red-50"
               onClick={() => {
                 setStatusFilter("IN_TRANSIT");
+                setCarrierFilter("");
                 setOriginFilter("");
                 setVesselFilter("");
                 setPage(0);
@@ -379,11 +441,12 @@ export default function DashboardPage() {
               </CardContent>
             </Card>
 
-            {/* At Risk — clicável */}
+            {/* At Risk — HIGH + CRITICAL */}
             <Card
               className="cursor-pointer transition-colors hover:bg-orange-50"
               onClick={() => {
-                setStatusFilter("IN_TRANSIT");
+                setStatusFilter("");
+                setCarrierFilter("");
                 setOriginFilter("");
                 setVesselFilter("");
                 setPage(0);
@@ -449,8 +512,24 @@ export default function DashboardPage() {
                 )}
               </div>
 
-              {/* Second row: origin + vessel */}
+              {/* Second row: carrier + vessel */}
               <div className="flex flex-col sm:flex-row gap-3">
+                {/* Carrier filter */}
+                <Select
+                  value={carrierFilter}
+                  onChange={(e) => {
+                    setCarrierFilter(e.target.value);
+                    setPage(0);
+                  }}
+                  className="sm:w-44"
+                >
+                  {CARRIERS.map((c) => (
+                    <option key={c.value} value={c.value}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+
                 {/* Origin filter */}
                 <Select
                   value={originFilter}
@@ -460,11 +539,15 @@ export default function DashboardPage() {
                   }}
                   className="sm:w-52"
                 >
-                  {ORIGINS.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
+                  <option value="">All origins</option>
+                  {Array.from(new Set((shipments?.data || []).map((s) => s.originPortUnlocode))).sort().map((code) => {
+                    const name = (shipments?.data || []).find((s) => s.originPortUnlocode === code)?.originPortName || code;
+                    return (
+                      <option key={code} value={code}>
+                        {code} — {name}
+                      </option>
+                    );
+                  })}
                 </Select>
 
                 {/* Vessel filter */}
@@ -474,7 +557,7 @@ export default function DashboardPage() {
                     setVesselFilter(e.target.value);
                     setPage(0);
                   }}
-                  className="sm:w-52"
+                  className="sm:w-56"
                 >
                   <option value="">All vessels</option>
                   {vesselOptions.map((v) => (
@@ -512,20 +595,16 @@ export default function DashboardPage() {
                   <thead>
                     <tr className="border-b bg-muted/50">
                       <th className="text-left p-4 font-medium">Booking</th>
+                      <th className="text-left p-4 font-medium hidden sm:table-cell">Carrier</th>
                       <th className="text-left p-4 font-medium">Status</th>
-                      <th className="text-left p-4 font-medium hidden md:table-cell">
-                        Container
-                      </th>
+                      <th className="text-left p-4 font-medium hidden md:table-cell">Container</th>
                       <th className="text-left p-4 font-medium">Route</th>
-                      <th className="text-left p-4 font-medium hidden lg:table-cell">
-                        Vessel
-                      </th>
-                      <th className="text-left p-4 font-medium hidden lg:table-cell">
-                        ETA
-                      </th>
-                      <th className="text-left p-4 font-medium hidden xl:table-cell">
-                        Last Update
-                      </th>
+                      <th className="text-left p-4 font-medium hidden lg:table-cell">Incoterm</th>
+                      <th className="text-left p-4 font-medium hidden lg:table-cell">ETA</th>
+                      <th className="text-left p-4 font-medium hidden xl:table-cell">Docs</th>
+                      <th className="text-left p-4 font-medium hidden xl:table-cell">Customs</th>
+                      <th className="text-left p-4 font-medium hidden xl:table-cell">Risk</th>
+                      <th className="text-left p-4 font-medium hidden xl:table-cell">Last Update</th>
                       <th className="text-left p-4 font-medium">Actions</th>
                     </tr>
                   </thead>
@@ -540,7 +619,19 @@ export default function DashboardPage() {
                           className="border-b last:border-0 hover:bg-muted/30 transition-colors"
                         >
                           {/* Booking */}
-                          <td className="p-4 font-mono font-medium">{s.booking}</td>
+                          <td className="p-4">
+                            <div className="font-mono font-medium">{s.booking}</div>
+                            {s.delayDays > 0 && (
+                              <div className="text-xs text-red-500 mt-0.5">
+                                +{s.delayDays}d delay
+                              </div>
+                            )}
+                          </td>
+
+                          {/* Carrier */}
+                          <td className="p-4 hidden sm:table-cell">
+                            <span className="text-sm font-medium">{s.carrier}</span>
+                          </td>
 
                           {/* Status */}
                           <td className="p-4">
@@ -551,24 +642,29 @@ export default function DashboardPage() {
 
                           {/* Container */}
                           <td className="p-4 font-mono hidden md:table-cell">
-                            {s.containerNumber || "—"}
+                            <div>{s.containerNumber || "—"}</div>
+                            {s.containerType && (
+                              <div className="text-xs text-muted-foreground">{s.containerSizeFt}ft · {s.containerType}</div>
+                            )}
                           </td>
 
                           {/* Route */}
                           <td className="p-4">
                             <span className="font-medium">{s.originPortUnlocode}</span>
                             <span className="text-muted-foreground mx-1">&rarr;</span>
-                            <span className="font-medium">
-                              {s.destinationPortUnlocode}
-                            </span>
+                            <span className="font-medium">{s.destinationPortUnlocode}</span>
+                            {s.transshipmentPortUnlocode && (
+                              <div className="text-xs text-muted-foreground">via {s.transshipmentPortUnlocode}</div>
+                            )}
                           </td>
 
-                          {/* Vessel */}
+                          {/* Incoterm */}
                           <td className="p-4 hidden lg:table-cell">
-                            <div>{s.vesselName}</div>
-                            <div className="text-xs text-muted-foreground font-mono">
-                              {s.voyageNumber}
-                            </div>
+                            {s.incoterm ? (
+                              <span className="text-xs font-mono bg-muted px-1.5 py-0.5 rounded">
+                                {s.incoterm}
+                              </span>
+                            ) : "—"}
                           </td>
 
                           {/* ETA */}
@@ -589,6 +685,21 @@ export default function DashboardPage() {
                             ) : (
                               "—"
                             )}
+                          </td>
+
+                          {/* Docs */}
+                          <td className="p-4 hidden xl:table-cell">
+                            {docStatusBadge(s.documentStatus)}
+                          </td>
+
+                          {/* Customs */}
+                          <td className="p-4 hidden xl:table-cell">
+                            {customsBadge(s.customsStatus)}
+                          </td>
+
+                          {/* Risk */}
+                          <td className="p-4 hidden xl:table-cell">
+                            {riskBadge(s.riskLevel)}
                           </td>
 
                           {/* Last Update */}

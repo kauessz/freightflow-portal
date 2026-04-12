@@ -1,5 +1,5 @@
 import axios, { AxiosError, InternalAxiosRequestConfig } from "axios";
-import { AuthResponse, ApiError } from "@/types";
+import { AuthResponse, AuthUserInfo, ApiError } from "@/types";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -26,7 +26,7 @@ export function getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_KEY);
 }
 
-export function getStoredUser(): Omit<AuthResponse, "accessToken" | "refreshToken"> | null {
+export function getStoredUser(): AuthUserInfo | null {
   if (typeof window === "undefined") return null;
   const raw = localStorage.getItem(USER_KEY);
   if (!raw) return null;
@@ -40,17 +40,7 @@ export function getStoredUser(): Omit<AuthResponse, "accessToken" | "refreshToke
 export function saveAuth(auth: AuthResponse): void {
   localStorage.setItem(TOKEN_KEY, auth.accessToken);
   localStorage.setItem(REFRESH_KEY, auth.refreshToken);
-  localStorage.setItem(
-    USER_KEY,
-    JSON.stringify({
-      userId: auth.userId,
-      email: auth.email,
-      name: auth.name,
-      role: auth.role,
-      tenantId: auth.tenantId,
-      tenantName: auth.tenantName,
-    })
-  );
+  localStorage.setItem(USER_KEY, JSON.stringify(auth.user));
 }
 
 export function clearAuth(): void {

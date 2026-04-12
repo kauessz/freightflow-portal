@@ -1,0 +1,9 @@
+model = "gpt-5.4"
+
+project_root_markers = [".git"]
+project_doc_fallback_filenames = ["AGENTS.md", ".agents.md", "TEAM_GUIDE.md"]
+project_doc_max_bytes = 65536
+
+[profiles.safe_incremental]
+model = "gpt-5.4"
+web_search = "cached"
