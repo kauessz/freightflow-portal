@@ -431,12 +431,33 @@ export interface VoyageTracking {
   vesselPosition: AisPosition | null;
 }
 
+export interface FleetMapRelatedShipment {
+  id: string;
+  booking: string;
+  containerNumber: string | null;
+  status: ShipmentStatus;
+  riskLevel: RiskLevel | null;
+  vesselName: string;
+  voyageNumber: string;
+  carrier: string | null;
+  originPortName: string;
+  originPortUnlocode: string;
+  destinationPortName: string;
+  destinationPortUnlocode: string;
+  eta: string;
+}
+
 export interface FleetMapVoyage extends VoyageTracking {
+  vesselId?: string | null;
   aggregatedRiskLevel?: RiskLevel | null;
-  relatedShipments?: Shipment[];
+  shipmentCount?: number | null;
+  relatedShipments?: FleetMapRelatedShipment[];
 }
 
 export interface ActiveVesselWithShipmentsResponse {
+  vesselId?: string | null;
+  imo?: string | null;
+  name?: string | null;
   voyageId?: string | null;
   voyageNumber?: string | null;
   status?: string | null;
@@ -447,16 +468,21 @@ export interface ActiveVesselWithShipmentsResponse {
   originPortUnlocode?: string | null;
   originLat?: number | null;
   originLon?: number | null;
+  destPortName?: string | null;
+  destPortUnlocode?: string | null;
   destinationPortName?: string | null;
   destinationPortUnlocode?: string | null;
   destinationLat?: number | null;
   destinationLon?: number | null;
   etd?: string | null;
   eta?: string | null;
+  shipmentCount?: number | null;
+  latitude?: number | null;
+  longitude?: number | null;
+  lastUpdate?: string | null;
+  positionSource?: PositionSource | null;
+  positionEstimated?: boolean | null;
   vesselPosition?: AisPosition | null;
   aggregatedRiskLevel?: RiskLevel | null;
-  relatedShipments?: Shipment[];
-  shipments?: Shipment[];
-  tracking?: VoyageTracking | null;
-  voyage?: Partial<VoyageTracking> | null;
+  relatedShipments?: FleetMapRelatedShipment[];
 }

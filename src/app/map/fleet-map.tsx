@@ -15,12 +15,12 @@ import L from "leaflet";
 import api from "@/lib/api";
 import {
   AisPosition,
+  FleetMapRelatedShipment,
   FleetMapVoyage,
   PositionSource,
   PositionTrackPoint,
   RevisedEtaResponse,
   RiskLevel,
-  Shipment,
 } from "@/types";
 
 // Leaflet CSS is injected at runtime to avoid SSR issues.
@@ -39,20 +39,9 @@ function ensureLeafletCSS() {
 
 if (typeof window !== "undefined") ensureLeafletCSS();
 
-interface TrackingLoadIssue {
-  voyageId: string;
-  voyageNumber: string;
-  vesselName: string;
-  message: string;
-}
-
 interface FleetMapProps {
   voyages: FleetMapVoyage[];
-  loadIssues: TrackingLoadIssue[];
   activeVoyageCount: number;
-  shipmentsByVoyage: Record<string, Shipment[]>;
-  shipmentsLoading: boolean;
-  shipmentsError: string | null;
   shipmentScope: "all" | "mine";
   onShipmentScopeChange: (scope: "all" | "mine") => void;
   /** Optional callback invoked by the auto-refresh timer every 60 s.
@@ -68,16 +57,9 @@ function getCarrier(voyage: FleetMapVoyage) {
   return voyage.carrier?.trim() || "Carrier unavailable";
 }
 
-function getVoyageShipmentKey(voyage: Pick<FleetMapVoyage, "voyageNumber" | "vesselName">) {
-  return `${voyage.voyageNumber}::${voyage.vesselName}`.toUpperCase();
-}
-
-function getVoyageShipments(
-  shipmentsByVoyage: Record<string, Shipment[]>,
-  voyage: Pick<FleetMapVoyage, "voyageNumber" | "vesselName" | "relatedShipments">
-) {
+function getVoyageShipments(voyage: Pick<FleetMapVoyage, "relatedShipments">) {
   if (voyage.relatedShipments) return voyage.relatedShipments;
-  return shipmentsByVoyage[getVoyageShipmentKey(voyage)] ?? [];
+  return [];
 }
 
 // ─── Status + position helpers ───────────────────────────────────────────────
@@ -211,7 +193,7 @@ function riskBadgeStyles(level: RiskLevel | null) {
   }
 }
 
-function aggregateRiskLevel(shipments: Shipment[]): RiskLevel | null {
+function aggregateRiskLevel(shipments: FleetMapRelatedShipment[]): RiskLevel | null {
   const severityOrder: RiskLevel[] = ["LOW", "MEDIUM", "HIGH", "CRITICAL"];
   return shipments.reduce<RiskLevel | null>((currentHighest, shipment) => {
     if (!shipment.riskLevel) return currentHighest;
@@ -328,11 +310,7 @@ function MapDismissSelection({ onDismiss }: { onDismiss: () => void }) {
 
 export default function FleetMap({
   voyages,
-  loadIssues,
   activeVoyageCount,
-  shipmentsByVoyage,
-  shipmentsLoading,
-  shipmentsError,
   shipmentScope,
   onShipmentScopeChange,
   onRefresh,
@@ -369,7 +347,7 @@ export default function FleetMap({
       voyages.filter((voyage) => {
         if (
           shipmentScope === "mine" &&
-          getVoyageShipments(shipmentsByVoyage, voyage).length === 0
+          getVoyageShipments(voyage).length === 0
         ) {
           return false;
         }
@@ -377,7 +355,7 @@ export default function FleetMap({
         if (statusFilter !== "All" && voyage.status !== statusFilter) return false;
         return true;
       }),
-    [voyages, carrierFilter, statusFilter, shipmentScope, shipmentsByVoyage]
+    [voyages, carrierFilter, statusFilter, shipmentScope]
   );
 
   // Keep selection valid when filters change
@@ -483,13 +461,12 @@ export default function FleetMap({
     !showEmptyState && filteredVoyages.length > 0 && voyagesWithMarkers.length === 0;
   const showMineEmptyState =
     !showEmptyState && shipmentScope === "mine" && filteredVoyages.length === 0;
-  const hasDegradedState =
-    loadIssues.length > 0 || voyagesWithoutPosition.length > 0 || !!shipmentsError;
+  const hasDegradedState = voyagesWithoutPosition.length > 0;
 
-  const selectedShipments = selected ? getVoyageShipments(shipmentsByVoyage, selected) : [];
+  const selectedShipments = selected ? getVoyageShipments(selected) : [];
   const selectedAggregatedRisk = selected?.aggregatedRiskLevel ?? aggregateRiskLevel(selectedShipments);
   const visibleShipmentCount = filteredVoyages.reduce(
-    (total, voyage) => total + getVoyageShipments(shipmentsByVoyage, voyage).length,
+    (total, voyage) => total + getVoyageShipments(voyage).length,
     0
   );
 
@@ -726,12 +703,6 @@ export default function FleetMap({
             Degraded fleet coverage
           </div>
           <div style={{ fontSize: 12, lineHeight: 1.45 }}>
-            {shipmentsError && <div>{shipmentsError}</div>}
-            {loadIssues.length > 0 && (
-              <div>
-                {loadIssues.length} voyage{loadIssues.length !== 1 ? "s" : ""} failed to load tracking.
-              </div>
-            )}
             {voyagesWithoutPosition.length > 0 && (
               <div>
                 {voyagesWithoutPosition.length} voyage{voyagesWithoutPosition.length !== 1 ? "s" : ""} loaded without a usable position.
@@ -808,11 +779,6 @@ export default function FleetMap({
           Showing {filteredVoyages.length} voyage{filteredVoyages.length !== 1 ? "s" : ""} and{" "}
           {visibleShipmentCount} shipment{visibleShipmentCount !== 1 ? "s" : ""}.
         </div>
-        {shipmentsLoading && (
-          <div style={{ marginTop: 4, fontSize: 11, color: "#64748b" }}>
-            Loading shipment overlays...
-          </div>
-        )}
       </div>
 
       {/* ── Leaflet Map ── */}
@@ -909,7 +875,7 @@ export default function FleetMap({
             if (!hasCoordinates(position)) return null;
 
             const positionMeta = getPositionMeta(position);
-            const voyageShipments = getVoyageShipments(shipmentsByVoyage, voyage);
+            const voyageShipments = getVoyageShipments(voyage);
             const aggregatedRisk = voyage.aggregatedRiskLevel ?? aggregateRiskLevel(voyageShipments);
             const riskStyles = riskBadgeStyles(aggregatedRisk);
             const isSelectedVoyage = selected?.voyageId === voyage.voyageId;
@@ -1253,27 +1219,6 @@ export default function FleetMap({
               </div>
             )}
           </div>
-
-          {/* Coverage notes */}
-          {loadIssues.length > 0 && (
-            <div style={{ padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 700,
-                  color: "#94a3b8",
-                  textTransform: "uppercase",
-                  letterSpacing: ".08em",
-                  marginBottom: 8,
-                }}
-              >
-                Coverage Notes
-              </div>
-              <div style={{ fontSize: 12, color: "#475569", lineHeight: 1.5 }}>
-                {loadIssues.length} voyage{loadIssues.length !== 1 ? "s" : ""} failed to load tracking in this refresh.
-              </div>
-            </div>
-          )}
 
           {/* Related shipments */}
           {selectedShipments.length > 0 && (

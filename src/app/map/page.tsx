@@ -15,10 +15,8 @@ import api, { isAuthenticated } from "@/lib/api";
 import {
   ActiveVesselWithShipmentsResponse,
   FleetMapVoyage,
-  VoyageTracking,
-  PageResponse,
   AisPosition,
-  Shipment,
+  FleetMapRelatedShipment,
   RiskLevel,
 } from "@/types";
 import { Button } from "@/components/ui/button";
@@ -26,23 +24,6 @@ import { Badge } from "@/components/ui/badge";
 
 // Leaflet must be dynamically imported (needs window/document)
 const FleetMap = dynamic(() => import("./fleet-map"), { ssr: false });
-
-// Voyage list item from /api/v1/voyages
-interface VoyageListItem {
-  id: string;
-  voyageNumber: string;
-  status: string;
-  vesselName: string;
-  vesselImo: string;
-  carrier?: string | null;
-}
-
-interface TrackingLoadIssue {
-  voyageId: string;
-  voyageNumber: string;
-  vesselName: string;
-  message: string;
-}
 
 type ShipmentScope = "all" | "mine";
 
@@ -65,18 +46,28 @@ function readRiskLevel(value: unknown): RiskLevel | null {
   return null;
 }
 
-function isShipmentLike(value: unknown): value is Shipment {
+function readBoolean(value: unknown): boolean | null {
+  return typeof value === "boolean" ? value : null;
+}
+
+function isFleetMapRelatedShipment(value: unknown): value is FleetMapRelatedShipment {
   return (
     isRecord(value) &&
     typeof value.id === "string" &&
     typeof value.booking === "string" &&
+    typeof value.status === "string" &&
     typeof value.vesselName === "string" &&
-    typeof value.voyageNumber === "string"
+    typeof value.voyageNumber === "string" &&
+    typeof value.originPortName === "string" &&
+    typeof value.originPortUnlocode === "string" &&
+    typeof value.destinationPortName === "string" &&
+    typeof value.destinationPortUnlocode === "string" &&
+    typeof value.eta === "string"
   );
 }
 
-function readShipments(value: unknown): Shipment[] {
-  return Array.isArray(value) ? value.filter(isShipmentLike) : [];
+function readRelatedShipments(value: unknown): FleetMapRelatedShipment[] {
+  return Array.isArray(value) ? value.filter(isFleetMapRelatedShipment) : [];
 }
 
 function normalizePosition(position: AisPosition | null | undefined): AisPosition | null {
@@ -99,40 +90,19 @@ function normalizePosition(position: AisPosition | null | undefined): AisPositio
   };
 }
 
-function normalizeTracking(
-  tracking: VoyageTracking,
-  voyage: VoyageListItem
-): VoyageTracking {
-  return {
-    ...tracking,
-    carrier: tracking.carrier ?? voyage.carrier ?? null,
-    vesselPosition: normalizePosition(tracking.vesselPosition),
-  };
-}
-
 function normalizeActiveFleetVoyage(item: ActiveVesselWithShipmentsResponse): FleetMapVoyage | null {
-  const trackingSource = isRecord(item.tracking)
-    ? item.tracking
-    : isRecord(item.voyage)
-      ? item.voyage
-      : item;
-
-  const voyageId = readString(item.voyageId) ?? readString(trackingSource.voyageId);
-  const voyageNumber = readString(item.voyageNumber) ?? readString(trackingSource.voyageNumber);
-  const status = readString(item.status) ?? readString(trackingSource.status);
-  const vesselName = readString(item.vesselName) ?? readString(trackingSource.vesselName);
-  const vesselImo = readString(item.vesselImo) ?? readString(trackingSource.vesselImo);
-  const originPortName =
-    readString(item.originPortName) ?? readString(trackingSource.originPortName);
-  const originPortUnlocode =
-    readString(item.originPortUnlocode) ?? readString(trackingSource.originPortUnlocode);
-  const destinationPortName =
-    readString(item.destinationPortName) ?? readString(trackingSource.destinationPortName);
+  const voyageId = readString(item.voyageId);
+  const voyageNumber = readString(item.voyageNumber);
+  const status = readString(item.status);
+  const vesselName = readString(item.vesselName) ?? readString(item.name);
+  const vesselImo = readString(item.vesselImo) ?? readString(item.imo);
+  const originPortName = readString(item.originPortName);
+  const originPortUnlocode = readString(item.originPortUnlocode);
+  const destinationPortName = readString(item.destinationPortName) ?? readString(item.destPortName);
   const destinationPortUnlocode =
-    readString(item.destinationPortUnlocode) ??
-    readString(trackingSource.destinationPortUnlocode);
-  const etd = readString(item.etd) ?? readString(trackingSource.etd);
-  const eta = readString(item.eta) ?? readString(trackingSource.eta);
+    readString(item.destinationPortUnlocode) ?? readString(item.destPortUnlocode);
+  const etd = readString(item.etd);
+  const eta = readString(item.eta);
 
   if (
     !voyageId ||
@@ -150,74 +120,48 @@ function normalizeActiveFleetVoyage(item: ActiveVesselWithShipmentsResponse): Fl
     return null;
   }
 
-  const positionCandidate =
-    item.vesselPosition ??
-    (isRecord(trackingSource.vesselPosition) ? (trackingSource.vesselPosition as AisPosition) : null);
+  const flattenedPosition =
+    readNumber(item.latitude) != null || readNumber(item.longitude) != null || item.lastUpdate
+      ? {
+          imo: vesselImo,
+          latitude: readNumber(item.latitude),
+          longitude: readNumber(item.longitude),
+          speed: null,
+          course: null,
+          status: null,
+          lastUpdate: readString(item.lastUpdate),
+          positionSource: item.positionSource ?? null,
+          positionEstimated: readBoolean(item.positionEstimated),
+        }
+      : null;
 
   return {
+    vesselId: readString(item.vesselId),
     voyageId,
     voyageNumber,
     status,
     vesselName,
     vesselImo,
-    carrier: readString(item.carrier) ?? readString(trackingSource.carrier),
+    carrier: readString(item.carrier),
     originPortName,
     originPortUnlocode,
-    originLat: readNumber(item.originLat) ?? readNumber(trackingSource.originLat) ?? 0,
-    originLon: readNumber(item.originLon) ?? readNumber(trackingSource.originLon) ?? 0,
+    originLat: readNumber(item.originLat) ?? 0,
+    originLon: readNumber(item.originLon) ?? 0,
     destinationPortName,
     destinationPortUnlocode,
-    destinationLat: readNumber(item.destinationLat) ?? readNumber(trackingSource.destinationLat) ?? 0,
-    destinationLon: readNumber(item.destinationLon) ?? readNumber(trackingSource.destinationLon) ?? 0,
+    destinationLat: readNumber(item.destinationLat) ?? 0,
+    destinationLon: readNumber(item.destinationLon) ?? 0,
     etd,
     eta,
-    vesselPosition: normalizePosition(positionCandidate),
+    vesselPosition: normalizePosition(item.vesselPosition ?? flattenedPosition),
     aggregatedRiskLevel: readRiskLevel(item.aggregatedRiskLevel),
-    relatedShipments: readShipments(item.relatedShipments ?? item.shipments),
+    shipmentCount: readNumber(item.shipmentCount),
+    relatedShipments: readRelatedShipments(item.relatedShipments),
   };
 }
 
 function hasCoordinates(position: AisPosition | null | undefined) {
   return position?.latitude != null && position?.longitude != null;
-}
-
-function getVoyageShipmentKey(voyage: Pick<VoyageTracking, "voyageNumber" | "vesselName">) {
-  return `${voyage.voyageNumber}::${voyage.vesselName}`.toUpperCase();
-}
-
-function groupShipmentsByVoyage(shipments: Shipment[]) {
-  return shipments.reduce<Record<string, Shipment[]>>((acc, shipment) => {
-    const key = getVoyageShipmentKey(shipment);
-    if (!acc[key]) acc[key] = [];
-    acc[key].push(shipment);
-    return acc;
-  }, {});
-}
-
-async function fetchAllShipments() {
-  const size = 100;
-  let page = 0;
-  let totalPages = 1;
-  const shipments: Shipment[] = [];
-
-  while (page < totalPages) {
-    const response = await api.get<PageResponse<Shipment>>("/shipments", {
-      params: { page, size },
-    });
-    shipments.push(...(response.data?.data || []));
-    totalPages = response.data?.meta?.totalPages || 1;
-    page += 1;
-  }
-
-  return shipments;
-}
-
-function groupRelatedShipmentsByVoyage(voyages: FleetMapVoyage[]) {
-  return voyages.reduce<Record<string, Shipment[]>>((acc, voyage) => {
-    const key = getVoyageShipmentKey(voyage);
-    acc[key] = voyage.relatedShipments ?? [];
-    return acc;
-  }, {});
 }
 
 function dedupeVoyagesByImo(voyages: FleetMapVoyage[]) {
@@ -246,10 +190,6 @@ export default function MapPage() {
   const [mounted, setMounted] = useState(false);
   const [activeVoyageCount, setActiveVoyageCount] = useState(0);
   const [trackingData, setTrackingData] = useState<FleetMapVoyage[]>([]);
-  const [trackingIssues, setTrackingIssues] = useState<TrackingLoadIssue[]>([]);
-  const [shipmentsByVoyage, setShipmentsByVoyage] = useState<Record<string, Shipment[]>>({});
-  const [shipmentsLoading, setShipmentsLoading] = useState(false);
-  const [shipmentsError, setShipmentsError] = useState<string | null>(null);
   const [shipmentScope, setShipmentScope] = useState<ShipmentScope>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -258,83 +198,10 @@ export default function MapPage() {
   // FIX 2: replaced countdown + auto-refresh with a simple "last updated" timestamp
   const [lastUpdatedAt, setLastUpdatedAt] = useState<Date | null>(null);
 
-  const fetchLegacyFleetPositions = useCallback(async () => {
-    // 1. Get all voyages
-    const voyagesRes = await api.get<PageResponse<VoyageListItem>>("/voyages", {
-      params: { size: 100 },
-    });
-
-    const voyages = voyagesRes.data?.data || [];
-
-    // 2. Filter to IN_TRANSIT and DEPARTED voyages
-    const activeVoyages = voyages.filter(
-      (v) => v.status === "IN_TRANSIT" || v.status === "DEPARTED"
-    );
-    setActiveVoyageCount(activeVoyages.length);
-
-    if (activeVoyages.length === 0) {
-      setTrackingData([]);
-      setTrackingIssues([]);
-      setShipmentsByVoyage({});
-      setShipmentsError(null);
-      setLastUpdatedAt(new Date());
-      return;
-    }
-
-    const shipmentsPromise = fetchAllShipments();
-
-    // 3. Fetch tracking data for each active voyage (in parallel)
-    const trackingPromises = activeVoyages.map(async (voyage) => {
-      try {
-        const res = await api.get<VoyageTracking>(`/voyages/${voyage.id}/tracking`);
-        return {
-          tracking: normalizeTracking(res.data, voyage) as FleetMapVoyage,
-          issue: null,
-        };
-      } catch {
-        return {
-          tracking: null,
-          issue: {
-            voyageId: voyage.id,
-            voyageNumber: voyage.voyageNumber,
-            vesselName: voyage.vesselName,
-            message: "Tracking is temporarily unavailable for this voyage.",
-          } satisfies TrackingLoadIssue,
-        };
-      }
-    });
-
-    const [results, shipmentsResult] = await Promise.all([
-      Promise.all(trackingPromises),
-      shipmentsPromise
-        .then((shipments) => ({ shipments, error: null }))
-        .catch(() => ({
-          shipments: [] as Shipment[],
-          error: "Shipment overlays could not be loaded for this map refresh.",
-        })),
-    ]);
-    const validResults = results
-      .map((result) => result.tracking)
-      .filter((tracking): tracking is FleetMapVoyage => tracking !== null);
-    const loadIssues = results
-      .map((result) => result.issue)
-      .filter((issue): issue is TrackingLoadIssue => issue !== null);
-
-    const uniqueResults = dedupeVoyagesByImo(validResults);
-
-    setTrackingData(uniqueResults);
-    setTrackingIssues(loadIssues);
-    setShipmentsByVoyage(groupShipmentsByVoyage(shipmentsResult.shipments));
-    setShipmentsError(shipmentsResult.error);
-    setLastUpdatedAt(new Date());
-  }, []);
-
   const fetchFleetPositions = useCallback(async (showSpinner = true) => {
     if (showSpinner) setLoading(true);
     else setRefreshing(true);
-    setShipmentsLoading(true);
     setError(null);
-    setShipmentsError(null);
 
     try {
       const activeVesselsRes = await api.get<
@@ -355,26 +222,23 @@ export default function MapPage() {
 
         setActiveVoyageCount(normalizedActiveVessels.length);
         setTrackingData(dedupedVoyages);
-        setTrackingIssues([]);
-        setShipmentsByVoyage(groupRelatedShipmentsByVoyage(dedupedVoyages));
-        setShipmentsError(null);
         setLastUpdatedAt(new Date());
         return;
       }
 
-      await fetchLegacyFleetPositions();
+      setError("Fleet Map data is unavailable because the API response is incomplete.");
+      setTrackingData([]);
+      setActiveVoyageCount(0);
+      setLastUpdatedAt(new Date());
     } catch {
-      try {
-        await fetchLegacyFleetPositions();
-      } catch {
-        setError("Failed to load fleet positions. Please try again.");
-      }
+      setError("Failed to load fleet positions. Please try again.");
+      setTrackingData([]);
+      setActiveVoyageCount(0);
     } finally {
       setLoading(false);
       setRefreshing(false);
-      setShipmentsLoading(false);
     }
-  }, [fetchLegacyFleetPositions]);
+  }, []);
 
   // Initial load — no auto-refresh interval (removed to avoid unnecessary Railway quota usage)
   useEffect(() => {
@@ -402,7 +266,7 @@ export default function MapPage() {
     hasCoordinates(voyage.vesselPosition)
   ).length;
   const unavailablePositions = trackingData.length - positionedVoyages;
-  const degradedCount = unavailablePositions + trackingIssues.length + (shipmentsError ? 1 : 0);
+  const degradedCount = unavailablePositions;
 
   if (!mounted) {
     return (
@@ -437,9 +301,9 @@ export default function MapPage() {
 
             {!loading && activeVoyageCount > 0 && (
               <Badge className="bg-slate-100 text-slate-700 border-slate-300">
-                {activeVoyageCount} active voyage
-                {activeVoyageCount !== 1 ? "s" : ""}
-              </Badge>
+              {activeVoyageCount} active voyage
+              {activeVoyageCount !== 1 ? "s" : ""}
+            </Badge>
             )}
 
             {!loading && degradedCount > 0 && (
@@ -515,22 +379,9 @@ export default function MapPage() {
                 Fleet data loaded with degraded coverage.
               </p>
               <p className="text-sm">
-                {trackingIssues.length > 0 &&
-                  `${trackingIssues.length} voyage${trackingIssues.length !== 1 ? "s" : ""} could not load tracking.`}{" "}
                 {unavailablePositions > 0 &&
                   `${unavailablePositions} vessel${unavailablePositions !== 1 ? "s" : ""} loaded without a usable position.`}
-                {shipmentsError && ` Shipment overlays are unavailable for this refresh.`}
               </p>
-              {trackingIssues.length > 0 && (
-                <p className="text-xs text-amber-800">
-                  Affected voyages:{" "}
-                  {trackingIssues
-                    .slice(0, 3)
-                    .map((issue) => issue.voyageNumber)
-                    .join(", ")}
-                  {trackingIssues.length > 3 ? "..." : ""}
-                </p>
-              )}
             </div>
           </div>
         </div>
@@ -556,13 +407,10 @@ export default function MapPage() {
         >
           <FleetMap
             voyages={trackingData}
-            loadIssues={trackingIssues}
             activeVoyageCount={activeVoyageCount}
-            shipmentsByVoyage={shipmentsByVoyage}
-            shipmentsLoading={shipmentsLoading}
-            shipmentsError={shipmentsError}
             shipmentScope={shipmentScope}
             onShipmentScopeChange={setShipmentScope}
+            onRefresh={handleManualRefresh}
           />
         </div>
       )}
