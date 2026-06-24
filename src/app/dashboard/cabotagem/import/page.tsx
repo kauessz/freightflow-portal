@@ -81,14 +81,7 @@ export default function CabotagemImportPage() {
     setDragging(false);
   }, []);
 
-  const handleDrop = useCallback((e: React.DragEvent) => {
-    e.preventDefault();
-    setDragging(false);
-    const dropped = e.dataTransfer.files[0];
-    if (dropped) validateAndSetFile(dropped);
-  }, []);
-
-  function validateAndSetFile(f: File) {
+  const validateAndSetFile = useCallback((f: File) => {
     const ext = f.name.toLowerCase().slice(f.name.lastIndexOf("."));
     if (!ACCEPTED_EXTENSIONS.includes(ext)) {
       toast.error("Only .xlsx and .csv files are accepted.");
@@ -96,7 +89,14 @@ export default function CabotagemImportPage() {
     }
     setFile(f);
     setResult(null);
-  }
+  }, [toast]);
+
+  const handleDrop = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    setDragging(false);
+    const dropped = e.dataTransfer.files[0];
+    if (dropped) validateAndSetFile(dropped);
+  }, [validateAndSetFile]);
 
   function handleFileInput(e: React.ChangeEvent<HTMLInputElement>) {
     const f = e.target.files?.[0];

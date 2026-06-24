@@ -494,7 +494,7 @@ function DashboardContent() {
   }
 
   // Todos os filtros são server-side — a API retorna os dados já filtrados
-  let data = shipments?.data || [];
+  const data = shipments?.data || [];
 
   const meta = shipments?.meta;
 

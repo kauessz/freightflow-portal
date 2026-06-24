@@ -16,6 +16,7 @@ function NavigationSpinnerInner() {
     searchParams: searchParams.toString(),
   });
 
+  const showTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const hideTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const animTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -31,12 +32,15 @@ function NavigationSpinnerInner() {
       prevRef.current = { pathname: currentPathname, searchParams: currentSearch };
 
       // Clear any pending hide timers
+      if (showTimerRef.current) clearTimeout(showTimerRef.current);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
 
-      // Show the progress bar — reset to start, then animate to 100 %
-      setVisible(true);
-      setAnimating(false);
+      // Show the progress bar on the next tick to avoid synchronous state updates in the effect.
+      showTimerRef.current = setTimeout(() => {
+        setVisible(true);
+        setAnimating(false);
+      }, 0);
 
       // Small delay so the browser has time to paint the initial state
       animTimerRef.current = setTimeout(() => setAnimating(true), 30);
@@ -49,6 +53,7 @@ function NavigationSpinnerInner() {
     }
 
     return () => {
+      if (showTimerRef.current) clearTimeout(showTimerRef.current);
       if (hideTimerRef.current) clearTimeout(hideTimerRef.current);
       if (animTimerRef.current) clearTimeout(animTimerRef.current);
     };

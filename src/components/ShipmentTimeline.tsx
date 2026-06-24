@@ -171,7 +171,6 @@ export default function ShipmentTimeline({ events, status }: ShipmentTimelinePro
       {events.map((event, index) => {
         const isLastRecorded = index === events.length - 1;
         const isCurrent = isLastRecorded && projectedMilestones.length === 0;
-        const isConnectedToProjected = isLastRecorded && projectedMilestones.length > 0;
         const isHold = event.type === "CUSTOMS_HOLD";
 
         return (
