@@ -430,3 +430,33 @@ export interface VoyageTracking {
   eta: string;
   vesselPosition: AisPosition | null;
 }
+
+export interface FleetMapVoyage extends VoyageTracking {
+  aggregatedRiskLevel?: RiskLevel | null;
+  relatedShipments?: Shipment[];
+}
+
+export interface ActiveVesselWithShipmentsResponse {
+  voyageId?: string | null;
+  voyageNumber?: string | null;
+  status?: string | null;
+  vesselName?: string | null;
+  vesselImo?: string | null;
+  carrier?: string | null;
+  originPortName?: string | null;
+  originPortUnlocode?: string | null;
+  originLat?: number | null;
+  originLon?: number | null;
+  destinationPortName?: string | null;
+  destinationPortUnlocode?: string | null;
+  destinationLat?: number | null;
+  destinationLon?: number | null;
+  etd?: string | null;
+  eta?: string | null;
+  vesselPosition?: AisPosition | null;
+  aggregatedRiskLevel?: RiskLevel | null;
+  relatedShipments?: Shipment[];
+  shipments?: Shipment[];
+  tracking?: VoyageTracking | null;
+  voyage?: Partial<VoyageTracking> | null;
+}

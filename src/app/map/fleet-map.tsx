@@ -15,12 +15,12 @@ import L from "leaflet";
 import api from "@/lib/api";
 import {
   AisPosition,
+  FleetMapVoyage,
   PositionSource,
   PositionTrackPoint,
   RevisedEtaResponse,
   RiskLevel,
   Shipment,
-  VoyageTracking,
 } from "@/types";
 
 // Leaflet CSS is injected at runtime to avoid SSR issues.
@@ -47,7 +47,7 @@ interface TrackingLoadIssue {
 }
 
 interface FleetMapProps {
-  voyages: VoyageTracking[];
+  voyages: FleetMapVoyage[];
   loadIssues: TrackingLoadIssue[];
   activeVoyageCount: number;
   shipmentsByVoyage: Record<string, Shipment[]>;
@@ -64,29 +64,19 @@ type PositionTone = "live" | "degraded" | "unavailable";
 
 // ─── Carrier helpers ──────────────────────────────────────────────────────────
 
-function fallbackCarrier(name: string): string {
-  const normalizedName = name.toUpperCase();
-  if (normalizedName.includes("CMA CGM")) return "CMA CGM";
-  if (normalizedName.includes("HMM")) return "HMM";
-  if (normalizedName.includes("LOG IN") || normalizedName.includes("LOG-IN")) return "Log-In";
-  if (normalizedName.includes("MAERSK") || normalizedName.includes("SAN NICOLAS")) return "Maersk";
-  if (normalizedName.includes("MSC")) return "MSC";
-  if (normalizedName.startsWith("ONE") || normalizedName.includes(" ONE ")) return "ONE";
-  return "Carrier unavailable";
+function getCarrier(voyage: FleetMapVoyage) {
+  return voyage.carrier?.trim() || "Carrier unavailable";
 }
 
-function getCarrier(voyage: VoyageTracking) {
-  return voyage.carrier?.trim() || fallbackCarrier(voyage.vesselName);
-}
-
-function getVoyageShipmentKey(voyage: Pick<VoyageTracking, "voyageNumber" | "vesselName">) {
+function getVoyageShipmentKey(voyage: Pick<FleetMapVoyage, "voyageNumber" | "vesselName">) {
   return `${voyage.voyageNumber}::${voyage.vesselName}`.toUpperCase();
 }
 
 function getVoyageShipments(
   shipmentsByVoyage: Record<string, Shipment[]>,
-  voyage: Pick<VoyageTracking, "voyageNumber" | "vesselName">
+  voyage: Pick<FleetMapVoyage, "voyageNumber" | "vesselName" | "relatedShipments">
 ) {
+  if (voyage.relatedShipments) return voyage.relatedShipments;
   return shipmentsByVoyage[getVoyageShipmentKey(voyage)] ?? [];
 }
 
@@ -352,7 +342,7 @@ export default function FleetMap({
   // ── Existing filter state ──
   const [carrierFilter, setCarrierFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
-  const [selected, setSelected] = useState<VoyageTracking | null>(null);
+  const [selected, setSelected] = useState<FleetMapVoyage | null>(null);
 
   // ── TAREFA 2 — Auto-refresh state ──
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
@@ -497,7 +487,7 @@ export default function FleetMap({
     loadIssues.length > 0 || voyagesWithoutPosition.length > 0 || !!shipmentsError;
 
   const selectedShipments = selected ? getVoyageShipments(shipmentsByVoyage, selected) : [];
-  const selectedAggregatedRisk = aggregateRiskLevel(selectedShipments);
+  const selectedAggregatedRisk = selected?.aggregatedRiskLevel ?? aggregateRiskLevel(selectedShipments);
   const visibleShipmentCount = filteredVoyages.reduce(
     (total, voyage) => total + getVoyageShipments(shipmentsByVoyage, voyage).length,
     0
@@ -920,7 +910,7 @@ export default function FleetMap({
 
             const positionMeta = getPositionMeta(position);
             const voyageShipments = getVoyageShipments(shipmentsByVoyage, voyage);
-            const aggregatedRisk = aggregateRiskLevel(voyageShipments);
+            const aggregatedRisk = voyage.aggregatedRiskLevel ?? aggregateRiskLevel(voyageShipments);
             const riskStyles = riskBadgeStyles(aggregatedRisk);
             const isSelectedVoyage = selected?.voyageId === voyage.voyageId;
 
