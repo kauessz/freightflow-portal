@@ -11,12 +11,11 @@ import {
   AlertCircle,
   PackageX,
   Calendar,
-  FileText,
-  Phone,
-  AlertTriangle,
+  Clock3,
+  Info,
 } from "lucide-react";
 import api from "@/lib/api";
-import { TrackingResponse, ApiError } from "@/types";
+import { PublicTrackingResponse, ApiError } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -24,27 +23,10 @@ import { Badge } from "@/components/ui/badge";
 import ShipmentTimeline from "@/components/ShipmentTimeline";
 import { statusColor, statusLabel, formatDateShort, formatDateTime } from "@/lib/utils";
 
-function DocStatusBadge({ status }: { status: string | null | undefined }) {
-  const map: Record<string, { label: string; cls: string }> = {
-    COMPLETE: { label: "Documents complete", cls: "bg-green-100 text-green-700" },
-    PARTIALLY_RECEIVED: { label: "Documents partial", cls: "bg-yellow-100 text-yellow-700" },
-    PENDING: { label: "Documents pending", cls: "bg-red-100 text-red-700" },
-  };
-
-  const s = map[status ?? "PENDING"] ?? map["PENDING"];
-
-  return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded text-xs font-medium ${s.cls}`}>
-      <FileText className="h-3 w-3" />
-      {s.label}
-    </span>
-  );
-}
-
 export default function TrackPageClient() {
   const searchParams = useSearchParams();
   const [booking, setBooking] = useState("");
-  const [tracking, setTracking] = useState<TrackingResponse | null>(null);
+  const [tracking, setTracking] = useState<PublicTrackingResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
@@ -67,7 +49,7 @@ export default function TrackPageClient() {
     setNotFound(false);
 
     try {
-      const response = await api.get<TrackingResponse>(
+      const response = await api.get<PublicTrackingResponse>(
         `/tracking/${encodeURIComponent(trimmed)}`
       );
       setTracking(response.data);
@@ -178,10 +160,9 @@ export default function TrackPageClient() {
                     <Badge className={`${statusColor(tracking.status)} text-sm px-3 py-1`}>
                       {statusLabel(tracking.status)}
                     </Badge>
-                    {tracking.delayDays > 0 && (
-                      <span className="text-xs text-red-500 font-medium flex items-center gap-1">
-                        <AlertTriangle className="h-3 w-3" />
-                        +{tracking.delayDays} day{tracking.delayDays !== 1 ? "s" : ""} delay
+                    {tracking.lastUpdate && (
+                      <span className="text-xs text-muted-foreground">
+                        Last update: {formatDateTime(tracking.lastUpdate)}
                       </span>
                     )}
                   </div>
@@ -239,6 +220,15 @@ export default function TrackPageClient() {
                       {formatDateShort(tracking.eta)}
                     </p>
                   </div>
+                  <div>
+                    <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
+                      Latest Update
+                    </p>
+                    <p className="font-medium flex items-center gap-1">
+                      <Clock3 className="h-3.5 w-3.5 text-muted-foreground" />
+                      {tracking.lastUpdate ? formatDateTime(tracking.lastUpdate) : "Not available"}
+                    </p>
+                  </div>
                   {tracking.containerNumber && (
                     <div>
                       <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Container</p>
@@ -248,44 +238,21 @@ export default function TrackPageClient() {
                 </div>
 
                 <div className="border-t pt-4 space-y-4">
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-4 text-sm">
-                    {tracking.houseBl && (
+                  {tracking.statusMessage && (
+                    <div className="flex items-start gap-3 rounded-lg border bg-muted/30 p-4">
+                      <Info className="h-4 w-4 text-muted-foreground shrink-0 mt-0.5" />
                       <div>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">House BL</p>
-                        <p className="font-medium font-mono">{tracking.houseBl}</p>
-                      </div>
-                    )}
-                    {tracking.masterBl && (
-                      <div>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Master BL</p>
-                        <p className="font-medium font-mono">{tracking.masterBl}</p>
-                      </div>
-                    )}
-                    {tracking.incoterm && (
-                      <div>
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Incoterm</p>
-                        <p className="font-medium">
-                          <span className="font-mono bg-muted px-1.5 py-0.5 rounded text-xs">
-                            {tracking.incoterm}
-                          </span>
+                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">
+                          Public Status
                         </p>
+                        <p className="text-sm font-medium">{tracking.statusMessage}</p>
                       </div>
-                    )}
-                    {tracking.cargoDescription && (
-                      <div className="col-span-2 md:col-span-3">
-                        <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Cargo</p>
-                        <p className="font-medium">{tracking.cargoDescription}</p>
-                      </div>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
-                  <div className="flex items-center justify-between flex-wrap gap-3">
-                    <DocStatusBadge status={tracking.documentStatus} />
-                    <p className="text-xs text-muted-foreground flex items-center gap-1">
-                      <Phone className="h-3 w-3" />
-                      For support, contact your freight forwarder
-                    </p>
-                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    This public view shows sanitized milestone updates only.
+                  </p>
                 </div>
               </CardContent>
             </Card>
@@ -293,17 +260,17 @@ export default function TrackPageClient() {
             <Card>
               <CardHeader className="pb-3">
                 <div className="flex items-center justify-between">
-                  <CardTitle className="text-lg">Shipment Timeline</CardTitle>
-                  {tracking.events.length > 0 && (
+                  <CardTitle className="text-lg">Tracking Milestones</CardTitle>
+                  {tracking.milestones.length > 0 && (
                     <span className="text-xs text-muted-foreground">
-                      {tracking.events.length} event{tracking.events.length !== 1 ? "s" : ""} recorded
+                      {tracking.milestones.length} milestone{tracking.milestones.length !== 1 ? "s" : ""} recorded
                     </span>
                   )}
                 </div>
               </CardHeader>
               <CardContent>
                 <ShipmentTimeline
-                  events={tracking.events}
+                  events={tracking.milestones}
                   status={tracking.status}
                 />
               </CardContent>

@@ -44,7 +44,7 @@ export default function CustomersPage() {
     setMounted(true);
     if (!isAuthenticated()) { router.replace("/login"); return; }
     const stored = getStoredUser();
-    const role = (stored as any)?.role;
+    const role = stored?.role;
     if (role !== "ADMIN" && role !== "OPERATOR") { router.replace("/dashboard"); return; }
     setCanEdit(role === "ADMIN" || role === "OPERATOR");
     loadData();

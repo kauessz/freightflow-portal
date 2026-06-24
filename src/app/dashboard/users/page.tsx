@@ -67,7 +67,7 @@ export default function UsersPage() {
     setMounted(true);
     if (!isAuthenticated()) { router.replace("/login"); return; }
     const user = getStoredUser();
-    if ((user as any)?.role !== "ADMIN") { router.replace("/dashboard"); return; }
+    if (user?.role !== "ADMIN") { router.replace("/dashboard"); return; }
     loadData();
   }, [router]);
 

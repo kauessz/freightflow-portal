@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState, useMemo, Fragment } from "react";
+import { useRouter } from "next/navigation";
 import {
   MapContainer,
   TileLayer,
@@ -11,7 +12,16 @@ import {
 } from "react-leaflet";
 import MarkerClusterGroup from "react-leaflet-cluster";
 import L from "leaflet";
-import { AisPosition, PositionSource, RiskLevel, Shipment, VoyageTracking } from "@/types";
+import api from "@/lib/api";
+import {
+  AisPosition,
+  PositionSource,
+  PositionTrackPoint,
+  RevisedEtaResponse,
+  RiskLevel,
+  Shipment,
+  VoyageTracking,
+} from "@/types";
 
 // Leaflet CSS is injected at runtime to avoid SSR issues.
 function ensureLeafletCSS() {
@@ -45,9 +55,14 @@ interface FleetMapProps {
   shipmentsError: string | null;
   shipmentScope: "all" | "mine";
   onShipmentScopeChange: (scope: "all" | "mine") => void;
+  /** Optional callback invoked by the auto-refresh timer every 60 s.
+   *  Wire up in page.tsx: onRefresh={handleManualRefresh} */
+  onRefresh?: () => void;
 }
 
 type PositionTone = "live" | "degraded" | "unavailable";
+
+// ─── Carrier helpers ──────────────────────────────────────────────────────────
 
 function fallbackCarrier(name: string): string {
   const normalizedName = name.toUpperCase();
@@ -74,6 +89,8 @@ function getVoyageShipments(
 ) {
   return shipmentsByVoyage[getVoyageShipmentKey(voyage)] ?? [];
 }
+
+// ─── Status + position helpers ───────────────────────────────────────────────
 
 function statusColor(status: string): string {
   switch (status) {
@@ -172,6 +189,8 @@ function getPositionMeta(position: AisPosition | null | undefined) {
   };
 }
 
+// ─── Risk helpers ─────────────────────────────────────────────────────────────
+
 function riskColor(level: RiskLevel | null) {
   switch (level) {
     case "CRITICAL":
@@ -212,6 +231,8 @@ function aggregateRiskLevel(shipments: Shipment[]): RiskLevel | null {
       : currentHighest;
   }, null);
 }
+
+// ─── Icon factories ───────────────────────────────────────────────────────────
 
 function vesselIcon(
   status: string,
@@ -260,6 +281,8 @@ function clusterIcon(cluster: { getChildCount: () => number }) {
   });
 }
 
+// ─── Format helpers ───────────────────────────────────────────────────────────
+
 function fmtSpeed(speed: number | null) {
   return speed == null ? "N/A" : `${speed.toFixed(1)} kn`;
 }
@@ -299,6 +322,8 @@ function posAgo(lastUpdate: string | null) {
   }
 }
 
+// ─── Map event helper ─────────────────────────────────────────────────────────
+
 function MapDismissSelection({ onDismiss }: { onDismiss: () => void }) {
   useMapEvents({
     click() {
@@ -309,6 +334,8 @@ function MapDismissSelection({ onDismiss }: { onDismiss: () => void }) {
   return null;
 }
 
+// ─── Main component ───────────────────────────────────────────────────────────
+
 export default function FleetMap({
   voyages,
   loadIssues,
@@ -318,11 +345,26 @@ export default function FleetMap({
   shipmentsError,
   shipmentScope,
   onShipmentScopeChange,
+  onRefresh,
 }: FleetMapProps) {
+  const router = useRouter();
+
+  // ── Existing filter state ──
   const [carrierFilter, setCarrierFilter] = useState("All");
   const [statusFilter, setStatusFilter] = useState("All");
   const [selected, setSelected] = useState<VoyageTracking | null>(null);
 
+  // ── TAREFA 2 — Auto-refresh state ──
+  const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
+  const [autoRefresh, setAutoRefresh] = useState(true);
+  const [secondsSinceRefresh, setSecondsSinceRefresh] = useState(0);
+
+  // ── TAREFA 3 — Track & ETA state ──
+  const [trackPoints, setTrackPoints] = useState<PositionTrackPoint[]>([]);
+  const [trackLoading, setTrackLoading] = useState(false);
+  const [revisedEta, setRevisedEta] = useState<RevisedEtaResponse | null>(null);
+
+  // ── Memos ──
   const carriers = useMemo(
     () => ["All", ...Array.from(new Set(voyages.map((voyage) => getCarrier(voyage)))).sort()],
     [voyages]
@@ -348,12 +390,91 @@ export default function FleetMap({
     [voyages, carrierFilter, statusFilter, shipmentScope, shipmentsByVoyage]
   );
 
+  // Keep selection valid when filters change
   useEffect(() => {
     if (!selected) return;
     const stillVisible = filteredVoyages.some((voyage) => voyage.voyageId === selected.voyageId);
     if (!stillVisible) setSelected(null);
   }, [filteredVoyages, selected]);
 
+  // ── TAREFA 2a — Auto-refresh interval (60 s) ──
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      onRefresh?.();
+      setLastRefresh(new Date());
+      setSecondsSinceRefresh(0);
+    }, 60_000);
+
+    return () => clearInterval(interval);
+  }, [autoRefresh, onRefresh]);
+
+  // ── TAREFA 2b — Seconds counter (1 s) ──
+  useEffect(() => {
+    if (!autoRefresh) return;
+
+    const interval = setInterval(() => {
+      setSecondsSinceRefresh((prev) => prev + 1);
+    }, 1_000);
+
+    return () => clearInterval(interval);
+  }, [autoRefresh]);
+
+  // ── TAREFA 3b — Fetch track points + revised ETA when vessel selected ──
+  useEffect(() => {
+    if (!selected) {
+      setTrackPoints([]);
+      setRevisedEta(null);
+      return;
+    }
+
+    let cancelled = false;
+    const imo = selected.vesselImo;
+    const voyageId = selected.voyageId;
+
+    setTrackLoading(true);
+    setTrackPoints([]);
+    setRevisedEta(null);
+
+    const trackPromise = imo
+      ? api.get<PositionTrackPoint[]>(`/vessels/${imo}/track`, { params: { limit: 50 } })
+      : Promise.reject(new Error("No IMO available for this vessel"));
+
+    const etaPromise = api.get<RevisedEtaResponse>(`/voyages/${voyageId}/eta`);
+
+    Promise.allSettled([trackPromise, etaPromise]).then(([trackResult, etaResult]) => {
+      if (cancelled) return;
+
+      if (trackResult.status === "fulfilled") {
+        const pts = Array.isArray(trackResult.value.data) ? trackResult.value.data : [];
+        // Sort ascending by occurredAt for correct polyline direction
+        const sorted = [...pts].sort(
+          (a, b) => new Date(a.occurredAt).getTime() - new Date(b.occurredAt).getTime()
+        );
+        setTrackPoints(sorted);
+      } else {
+        console.warn("[FleetMap] Track fetch failed:", trackResult.reason);
+        setTrackPoints([]);
+      }
+
+      if (etaResult.status === "fulfilled") {
+        setRevisedEta(etaResult.value.data);
+      } else {
+        console.warn("[FleetMap] ETA fetch failed:", etaResult.reason);
+        setRevisedEta(null);
+      }
+
+      setTrackLoading(false);
+    });
+
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selected?.voyageId]);
+
+  // ── Derived values ──
   const voyagesWithMarkers = filteredVoyages.filter((voyage) =>
     hasCoordinates(voyage.vesselPosition)
   );
@@ -382,6 +503,11 @@ export default function FleetMap({
     0
   );
 
+  // Track points as Leaflet positions (sorted ASC already)
+  const trackPolylinePositions: [number, number][] = trackPoints.map(
+    (pt) => [pt.lat, pt.lon]
+  );
+
   return (
     <div style={{ position: "absolute", inset: 0 }}>
       <style>{`
@@ -390,8 +516,14 @@ export default function FleetMap({
         .leaflet-popup-content-wrapper { border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,.15); }
         .marker-cluster-small, .marker-cluster-medium, .marker-cluster-large { background: transparent !important; }
         .marker-cluster-small div, .marker-cluster-medium div, .marker-cluster-large div { background: transparent !important; }
+        @keyframes pulse-dot {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(0.75); }
+        }
+        .refresh-dot-active { animation: pulse-dot 1.6s ease-in-out infinite; }
       `}</style>
 
+      {/* ── Filter controls (existing) ── */}
       <div
         style={{
           position: "absolute",
@@ -406,6 +538,7 @@ export default function FleetMap({
           maxWidth: "90vw",
         }}
       >
+        {/* Scope toggle */}
         <div
           style={{
             display: "flex",
@@ -440,6 +573,7 @@ export default function FleetMap({
           ))}
         </div>
 
+        {/* Carrier filter */}
         <div
           style={{
             display: "flex",
@@ -471,6 +605,7 @@ export default function FleetMap({
           ))}
         </div>
 
+        {/* Status filter */}
         <div
           style={{
             display: "flex",
@@ -507,6 +642,78 @@ export default function FleetMap({
         </div>
       </div>
 
+      {/* ── TAREFA 2d — Auto-refresh status bar ── */}
+      <div
+        style={{
+          position: "absolute",
+          top: 58,
+          left: "50%",
+          transform: "translateX(-50%)",
+          zIndex: 1000,
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          background: "rgba(15,23,42,.78)",
+          backdropFilter: "blur(6px)",
+          borderRadius: 20,
+          padding: "5px 12px 5px 10px",
+          boxShadow: "0 2px 10px rgba(0,0,0,.25)",
+          fontSize: 12,
+          color: "#e2e8f0",
+          whiteSpace: "nowrap",
+        }}
+      >
+        {/* Pulsing indicator dot */}
+        <div
+          className={autoRefresh ? "refresh-dot-active" : ""}
+          style={{
+            width: 8,
+            height: 8,
+            borderRadius: "50%",
+            background: autoRefresh ? "#22c55e" : "#6b7280",
+            flexShrink: 0,
+          }}
+        />
+        <span style={{ color: "#cbd5e1" }}>
+          Updated{" "}
+          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>
+            {secondsSinceRefresh}s
+          </span>{" "}
+          ago{" "}
+          <span style={{ color: "#64748b" }}>
+            (at {lastRefresh.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
+          </span>
+        </span>
+        <button
+          onClick={() => {
+            setAutoRefresh((prev) => {
+              if (!prev) {
+                // Resuming — reset counter
+                setSecondsSinceRefresh(0);
+                setLastRefresh(new Date());
+              }
+              return !prev;
+            });
+          }}
+          style={{
+            marginLeft: 4,
+            background: "rgba(255,255,255,.12)",
+            border: "1px solid rgba(255,255,255,.18)",
+            borderRadius: 12,
+            padding: "2px 9px",
+            cursor: "pointer",
+            color: "#e2e8f0",
+            fontSize: 11,
+            fontWeight: 600,
+            transition: "background .15s",
+          }}
+          title={autoRefresh ? "Pause auto-refresh" : "Resume auto-refresh"}
+        >
+          {autoRefresh ? "⏸ Pause" : "▶ Resume"}
+        </button>
+      </div>
+
+      {/* ── Degraded state panel (existing) ── */}
       {hasDegradedState && (
         <div
           style={{
@@ -544,6 +751,7 @@ export default function FleetMap({
         </div>
       )}
 
+      {/* ── Empty / unavailable overlay (existing) ── */}
       {(showEmptyState || showUnavailableState || showMineEmptyState) && (
         <div
           style={{
@@ -587,6 +795,7 @@ export default function FleetMap({
         </div>
       )}
 
+      {/* ── Map scope legend (existing) ── */}
       <div
         style={{
           position: "absolute",
@@ -616,6 +825,7 @@ export default function FleetMap({
         )}
       </div>
 
+      {/* ── Leaflet Map ── */}
       <MapContainer
         center={[-20, -30]}
         zoom={3}
@@ -630,12 +840,14 @@ export default function FleetMap({
           maxZoom={18}
         />
 
+        {/* Voyage route lines + port markers */}
         {filteredVoyages.map((voyage) => {
           const position = voyage.vesselPosition;
           const hasPosition = hasCoordinates(position);
 
           return (
             <Fragment key={voyage.voyageId}>
+              {/* Full route (dotted) */}
               <Polyline
                 positions={[
                   [voyage.originLat, voyage.originLon],
@@ -649,6 +861,7 @@ export default function FleetMap({
                 }}
               />
 
+              {/* Leg completed (solid) */}
               {hasPosition && (
                 <Polyline
                   positions={[
@@ -679,6 +892,20 @@ export default function FleetMap({
           );
         })}
 
+        {/* ── TAREFA 3c — Historical track polyline for selected vessel ── */}
+        {selected && trackPolylinePositions.length > 1 && (
+          <Polyline
+            positions={trackPolylinePositions}
+            pathOptions={{
+              color: "#60a5fa",
+              weight: 2,
+              opacity: 0.7,
+              dashArray: "4 4",
+            }}
+          />
+        )}
+
+        {/* Vessel markers with cluster */}
         <MarkerClusterGroup
           chunkedLoading
           zoomToBoundsOnClick
@@ -695,6 +922,7 @@ export default function FleetMap({
             const voyageShipments = getVoyageShipments(shipmentsByVoyage, voyage);
             const aggregatedRisk = aggregateRiskLevel(voyageShipments);
             const riskStyles = riskBadgeStyles(aggregatedRisk);
+            const isSelectedVoyage = selected?.voyageId === voyage.voyageId;
 
             return (
               <Marker
@@ -777,6 +1005,16 @@ export default function FleetMap({
                         {voyageShipments.length}
                       </span>
                     </div>
+
+                    {/* ── TAREFA 4 — Route track indicator (selected vessel only) ── */}
+                    {isSelectedVoyage && trackPoints.length > 0 && (
+                      <div style={{ fontSize: 11, color: "#6b7280", marginTop: 2 }}>
+                        Route{" "}
+                        <span style={{ color: "#2563eb", fontWeight: 500 }}>
+                          {trackPoints.length} points tracked
+                        </span>
+                      </div>
+                    )}
                   </div>
                 </Popup>
               </Marker>
@@ -785,6 +1023,7 @@ export default function FleetMap({
         </MarkerClusterGroup>
       </MapContainer>
 
+      {/* ── Drawer ── */}
       {selected && (
         <div
           style={{
@@ -803,6 +1042,7 @@ export default function FleetMap({
             flexDirection: "column",
           }}
         >
+          {/* Drawer header */}
           <div style={{ background: "#1e40af", color: "#fff", padding: "16px 16px 12px" }}>
             <div
               style={{
@@ -881,6 +1121,7 @@ export default function FleetMap({
             </div>
           </div>
 
+          {/* Current voyage section */}
           <div style={{ padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
             <div
               style={{
@@ -929,6 +1170,7 @@ export default function FleetMap({
             </div>
           </div>
 
+          {/* Position section */}
           <div style={{ padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
             <div
               style={{
@@ -977,7 +1219,9 @@ export default function FleetMap({
                     color: selectedAge.isOld ? "#f97316" : "#374151",
                   }}
                 >
-                  {selectedLastUpdate ? `${fmtDate(selectedLastUpdate)} (${selectedAge.label})` : "Unavailable"}
+                  {selectedLastUpdate
+                    ? `${fmtDate(selectedLastUpdate)} (${selectedAge.label})`
+                    : "Unavailable"}
                 </div>
               </div>
               <div>
@@ -1020,6 +1264,7 @@ export default function FleetMap({
             )}
           </div>
 
+          {/* Coverage notes */}
           {loadIssues.length > 0 && (
             <div style={{ padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
               <div
@@ -1040,6 +1285,7 @@ export default function FleetMap({
             </div>
           )}
 
+          {/* Related shipments */}
           {selectedShipments.length > 0 && (
             <div style={{ padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
               <div
@@ -1058,13 +1304,20 @@ export default function FleetMap({
                 {selectedShipments.map((shipment) => {
                   const badge = riskBadgeStyles(shipment.riskLevel);
                   return (
-                    <div
+                    <button
                       key={shipment.id}
+                      type="button"
+                      onClick={() => router.push(`/dashboard/shipments/${shipment.id}`)}
                       style={{
+                        width: "100%",
                         border: "1px solid #e2e8f0",
                         borderRadius: 8,
                         padding: "10px 12px",
                         background: "#f8fafc",
+                        cursor: "pointer",
+                        textAlign: "left",
+                        transition: "transform .15s ease, box-shadow .15s ease, border-color .15s ease",
+                        boxShadow: "0 1px 2px rgba(15,23,42,.04)",
                       }}
                     >
                       <div
@@ -1079,18 +1332,23 @@ export default function FleetMap({
                         <div style={{ fontSize: 12, fontWeight: 700, color: "#0f172a" }}>
                           {shipment.booking}
                         </div>
-                        <span
-                          style={{
-                            background: badge.background,
-                            color: badge.color,
-                            borderRadius: 999,
-                            padding: "2px 8px",
-                            fontSize: 11,
-                            fontWeight: 700,
-                          }}
-                        >
-                          {shipment.riskLevel}
-                        </span>
+                        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                          <span
+                            style={{
+                              background: badge.background,
+                              color: badge.color,
+                              borderRadius: 999,
+                              padding: "2px 8px",
+                              fontSize: 11,
+                              fontWeight: 700,
+                            }}
+                          >
+                            {shipment.riskLevel}
+                          </span>
+                          <span style={{ fontSize: 12, color: "#64748b", fontWeight: 600 }}>
+                            View
+                          </span>
+                        </div>
                       </div>
                       <div style={{ fontSize: 12, color: "#475569" }}>
                         {shipment.originPortUnlocode} → {shipment.destinationPortUnlocode}
@@ -1098,12 +1356,149 @@ export default function FleetMap({
                       <div style={{ fontSize: 11, color: "#64748b", marginTop: 2 }}>
                         Status {shipment.status.replace(/_/g, " ")}
                       </div>
-                    </div>
+                    </button>
                   );
                 })}
               </div>
             </div>
           )}
+
+          {/* ── TAREFA 3d — ETA Analysis section ── */}
+          <div style={{ padding: "14px 16px", borderBottom: "1px solid #f1f5f9" }}>
+            <div
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#94a3b8",
+                textTransform: "uppercase",
+                letterSpacing: ".08em",
+                marginBottom: 10,
+              }}
+            >
+              ETA Analysis
+            </div>
+
+            {/* Loading skeleton */}
+            {trackLoading && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                <div
+                  style={{
+                    height: 16,
+                    background: "#f1f5f9",
+                    borderRadius: 6,
+                    animation: "pulse-dot 1.4s ease-in-out infinite",
+                  }}
+                />
+                <div
+                  style={{
+                    height: 14,
+                    background: "#f1f5f9",
+                    borderRadius: 6,
+                    width: "68%",
+                    animation: "pulse-dot 1.4s ease-in-out infinite",
+                  }}
+                />
+              </div>
+            )}
+
+            {/* Revised ETA available */}
+            {!trackLoading && revisedEta && (
+              <div>
+                <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>
+                      Revised ETA
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>
+                      {fmtDate(revisedEta.revisedEta)}
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>
+                      Distance remaining
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>
+                      {revisedEta.distanceNm.toFixed(0)} NM
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 2 }}>
+                      Current speed
+                    </div>
+                    <div style={{ fontSize: 12, fontWeight: 600 }}>
+                      {revisedEta.speedKnots.toFixed(1)} kn
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", alignItems: "flex-end" }}>
+                    {/* Delay badge */}
+                    {revisedEta.delayDays > 0 ? (
+                      <span
+                        style={{
+                          background: "#fee2e2",
+                          color: "#991b1b",
+                          borderRadius: 999,
+                          padding: "3px 9px",
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        Delayed {revisedEta.delayDays}d
+                      </span>
+                    ) : revisedEta.delayHours < 0 ? (
+                      <span
+                        style={{
+                          background: "#dcfce7",
+                          color: "#15803d",
+                          borderRadius: 999,
+                          padding: "3px 9px",
+                          fontSize: 11,
+                          fontWeight: 700,
+                        }}
+                      >
+                        On time
+                      </span>
+                    ) : (
+                      <span
+                        style={{
+                          background: "#f1f5f9",
+                          color: "#475569",
+                          borderRadius: 999,
+                          padding: "3px 9px",
+                          fontSize: 11,
+                          fontWeight: 600,
+                        }}
+                      >
+                        On schedule
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Track point count */}
+                {trackPoints.length > 0 && (
+                  <div style={{ fontSize: 11, color: "#94a3b8" }}>
+                    {trackPoints.length} position update
+                    {trackPoints.length !== 1 ? "s" : ""} recorded
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* AIS unavailable */}
+            {!trackLoading && !revisedEta && (
+              <div>
+                <div style={{ fontSize: 12, color: "#94a3b8", fontStyle: "italic", lineHeight: 1.5 }}>
+                  ETA analysis unavailable — no AIS position
+                </div>
+                {trackPoints.length > 0 && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: "#94a3b8" }}>
+                    {trackPoints.length} position update
+                    {trackPoints.length !== 1 ? "s" : ""} recorded
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
 
           <div style={{ flex: 1 }} />
           <div

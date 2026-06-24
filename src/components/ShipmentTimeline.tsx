@@ -11,11 +11,13 @@ import {
   DoorOpen,
   Clock,
 } from "lucide-react";
-import { TrackingEvent, ShipmentStatus, EventType } from "@/types";
+import { TrackingEvent, PublicTrackingMilestone, ShipmentStatus, EventType } from "@/types";
 import { eventLabel, formatDateTimePtBR } from "@/lib/utils";
 
+type TimelineEvent = TrackingEvent | PublicTrackingMilestone;
+
 interface ShipmentTimelineProps {
-  events: TrackingEvent[];
+  events: TimelineEvent[];
   status: ShipmentStatus;
 }
 
@@ -43,7 +45,7 @@ const MILESTONE_CHAIN: EventType[] = [
 
 // Dado o status atual, quais milestones ainda são esperados (não registrados)
 function getProjectedMilestones(
-  events: TrackingEvent[],
+  events: TimelineEvent[],
   status: ShipmentStatus
 ): EventType[] {
   // Se já chegou/entregue/cancelado, não projetar nada
@@ -177,7 +179,7 @@ export default function ShipmentTimeline({ events, status }: ShipmentTimelinePro
             key={`event-${index}`}
             icon={EVENT_ICONS[event.type] || <MapPin className="h-4 w-4" />}
             label={eventLabel(event.type)}
-            description={event.description}
+            description={"description" in event ? event.description : undefined}
             location={event.location}
             dateTime={formatDateTimePtBR(event.occurredAt)}
             isLast={
