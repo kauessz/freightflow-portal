@@ -274,11 +274,11 @@ function fmtDate(iso: string | null | undefined) {
   }
 }
 
-function posAgo(lastUpdate: string | null) {
+function getRelativeTime(lastUpdate: string | null, now = Date.now()) {
   if (!lastUpdate) return { label: "Unavailable", isOld: false };
 
   try {
-    const elapsedMs = Date.now() - new Date(lastUpdate).getTime();
+    const elapsedMs = now - new Date(lastUpdate).getTime();
     const minutes = Math.floor(elapsedMs / 60_000);
     const hours = Math.floor(elapsedMs / 3_600_000);
     const label =
@@ -292,6 +292,118 @@ function posAgo(lastUpdate: string | null) {
   } catch {
     return { label: "Unavailable", isOld: false };
   }
+}
+
+function RelativeTimeText({
+  value,
+  intervalMs = 30_000,
+}: {
+  value: string | null;
+  intervalMs?: number;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    if (!value) return;
+
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, intervalMs);
+
+    return () => clearInterval(interval);
+  }, [intervalMs, value]);
+
+  return <>{getRelativeTime(value, now).label}</>;
+}
+
+function AutoRefreshStatusBar({
+  autoRefresh,
+  lastRefresh,
+  onToggle,
+}: {
+  autoRefresh: boolean;
+  lastRefresh: Date;
+  onToggle: () => void;
+}) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setNow(Date.now());
+    }, 1_000);
+
+    return () => clearInterval(interval);
+  }, []);
+
+  const elapsedSeconds = Math.max(
+    0,
+    Math.floor((now - lastRefresh.getTime()) / 1_000)
+  );
+
+  return (
+    <div
+      style={{
+        position: "absolute",
+        top: 58,
+        left: "50%",
+        transform: "translateX(-50%)",
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        background: "rgba(15,23,42,.78)",
+        backdropFilter: "blur(6px)",
+        borderRadius: 20,
+        padding: "5px 12px 5px 10px",
+        boxShadow: "0 2px 10px rgba(0,0,0,.25)",
+        fontSize: 12,
+        color: "#e2e8f0",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <div
+        className={autoRefresh ? "refresh-dot-active" : ""}
+        style={{
+          width: 8,
+          height: 8,
+          borderRadius: "50%",
+          background: autoRefresh ? "#22c55e" : "#6b7280",
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ color: "#cbd5e1" }}>
+        Updated{" "}
+        <span style={{ color: "#e2e8f0", fontWeight: 600 }}>{elapsedSeconds}s</span> ago{" "}
+        <span style={{ color: "#64748b" }}>
+          (at{" "}
+          {lastRefresh.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            hour12: false,
+          })}
+          )
+        </span>
+      </span>
+      <button
+        onClick={onToggle}
+        style={{
+          marginLeft: 4,
+          background: "rgba(255,255,255,.12)",
+          border: "1px solid rgba(255,255,255,.18)",
+          borderRadius: 12,
+          padding: "2px 9px",
+          cursor: "pointer",
+          color: "#e2e8f0",
+          fontSize: 11,
+          fontWeight: 600,
+          transition: "background .15s",
+        }}
+        title={autoRefresh ? "Pause auto-refresh" : "Resume auto-refresh"}
+      >
+        {autoRefresh ? "⏸ Pause" : "▶ Resume"}
+      </button>
+    </div>
+  );
 }
 
 // ─── Map event helper ─────────────────────────────────────────────────────────
@@ -325,7 +437,6 @@ export default function FleetMap({
   // ── TAREFA 2 — Auto-refresh state ──
   const [lastRefresh, setLastRefresh] = useState<Date>(new Date());
   const [autoRefresh, setAutoRefresh] = useState(true);
-  const [secondsSinceRefresh, setSecondsSinceRefresh] = useState(0);
 
   // ── TAREFA 3 — Track & ETA state ──
   const [trackPoints, setTrackPoints] = useState<PositionTrackPoint[]>([]);
@@ -372,22 +483,10 @@ export default function FleetMap({
     const interval = setInterval(() => {
       onRefresh?.();
       setLastRefresh(new Date());
-      setSecondsSinceRefresh(0);
     }, 60_000);
 
     return () => clearInterval(interval);
   }, [autoRefresh, onRefresh]);
-
-  // ── TAREFA 2b — Seconds counter (1 s) ──
-  useEffect(() => {
-    if (!autoRefresh) return;
-
-    const interval = setInterval(() => {
-      setSecondsSinceRefresh((prev) => prev + 1);
-    }, 1_000);
-
-    return () => clearInterval(interval);
-  }, [autoRefresh]);
 
   // ── TAREFA 3b — Fetch track points + revised ETA when vessel selected ──
   useEffect(() => {
@@ -453,7 +552,7 @@ export default function FleetMap({
   const portMarkerIcon = useMemo(() => portIcon(), []);
   const selectedPosition = selected?.vesselPosition ?? null;
   const selectedLastUpdate = getLastUpdate(selectedPosition);
-  const selectedAge = posAgo(selectedLastUpdate);
+  const selectedAge = getRelativeTime(selectedLastUpdate);
   const selectedPositionMeta = getPositionMeta(selectedPosition);
 
   const showEmptyState = activeVoyageCount === 0;
@@ -610,75 +709,18 @@ export default function FleetMap({
       </div>
 
       {/* ── TAREFA 2d — Auto-refresh status bar ── */}
-      <div
-        style={{
-          position: "absolute",
-          top: 58,
-          left: "50%",
-          transform: "translateX(-50%)",
-          zIndex: 1000,
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: "rgba(15,23,42,.78)",
-          backdropFilter: "blur(6px)",
-          borderRadius: 20,
-          padding: "5px 12px 5px 10px",
-          boxShadow: "0 2px 10px rgba(0,0,0,.25)",
-          fontSize: 12,
-          color: "#e2e8f0",
-          whiteSpace: "nowrap",
+      <AutoRefreshStatusBar
+        autoRefresh={autoRefresh}
+        lastRefresh={lastRefresh}
+        onToggle={() => {
+          setAutoRefresh((prev) => {
+            if (!prev) {
+              setLastRefresh(new Date());
+            }
+            return !prev;
+          });
         }}
-      >
-        {/* Pulsing indicator dot */}
-        <div
-          className={autoRefresh ? "refresh-dot-active" : ""}
-          style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: autoRefresh ? "#22c55e" : "#6b7280",
-            flexShrink: 0,
-          }}
-        />
-        <span style={{ color: "#cbd5e1" }}>
-          Updated{" "}
-          <span style={{ color: "#e2e8f0", fontWeight: 600 }}>
-            {secondsSinceRefresh}s
-          </span>{" "}
-          ago{" "}
-          <span style={{ color: "#64748b" }}>
-            (at {lastRefresh.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })})
-          </span>
-        </span>
-        <button
-          onClick={() => {
-            setAutoRefresh((prev) => {
-              if (!prev) {
-                // Resuming — reset counter
-                setSecondsSinceRefresh(0);
-                setLastRefresh(new Date());
-              }
-              return !prev;
-            });
-          }}
-          style={{
-            marginLeft: 4,
-            background: "rgba(255,255,255,.12)",
-            border: "1px solid rgba(255,255,255,.18)",
-            borderRadius: 12,
-            padding: "2px 9px",
-            cursor: "pointer",
-            color: "#e2e8f0",
-            fontSize: 11,
-            fontWeight: 600,
-            transition: "background .15s",
-          }}
-          title={autoRefresh ? "Pause auto-refresh" : "Resume auto-refresh"}
-        >
-          {autoRefresh ? "⏸ Pause" : "▶ Resume"}
-        </button>
-      </div>
+      />
 
       {/* ── Degraded state panel (existing) ── */}
       {hasDegradedState && (
@@ -1176,7 +1218,13 @@ export default function FleetMap({
                   }}
                 >
                   {selectedLastUpdate
-                    ? `${fmtDate(selectedLastUpdate)} (${selectedAge.label})`
+                    ? (
+                      <>
+                        {fmtDate(selectedLastUpdate)} (
+                        <RelativeTimeText value={selectedLastUpdate} />
+                        )
+                      </>
+                    )
                     : "Unavailable"}
                 </div>
               </div>
