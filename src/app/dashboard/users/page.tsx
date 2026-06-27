@@ -7,7 +7,8 @@ import {
   ArrowLeft, Loader2, AlertCircle, Plus, Ship,
   UserCheck, UserX, Users,
 } from "lucide-react";
-import api, { isAuthenticated, getStoredUser } from "@/lib/api";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import { ApiError } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -48,9 +49,8 @@ function roleBadge(role: string) {
   return <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${s.cls}`}>{s.label}</span>;
 }
 
-export default function UsersPage() {
+function UsersPageContent() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [users, setUsers] = useState<UserItem[]>([]);
   const [customers, setCustomers] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
@@ -64,12 +64,8 @@ export default function UsersPage() {
   const [formError, setFormError] = useState<string | null>(null);
 
   useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) { router.replace("/login"); return; }
-    const user = getStoredUser();
-    if (user?.role !== "ADMIN") { router.replace("/dashboard"); return; }
     loadData();
-  }, [router]);
+  }, []);
 
   async function loadData() {
     setLoading(true);
@@ -125,7 +121,7 @@ export default function UsersPage() {
     }
   }
 
-  if (!mounted || loading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -317,5 +313,13 @@ export default function UsersPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function UsersPage() {
+  return (
+    <RequireAuth allowedRoles={["ADMIN"]}>
+      <UsersPageContent />
+    </RequireAuth>
   );
 }

@@ -4,6 +4,7 @@ import "./globals.css";
 import { ToastProvider } from "@/hooks/useToast";
 import ToastContainer from "@/components/ToastContainer";
 import NavigationSpinner from "@/components/NavigationSpinner";
+import { AuthProvider } from "@/components/auth-provider";
 
 const inter = Inter({
   subsets: ["latin"],
@@ -24,9 +25,11 @@ export default function RootLayout({
     <html lang="en">
       <body className={`${inter.variable} font-sans antialiased`}>
         <ToastProvider>
-          <NavigationSpinner />
-          {children}
-          <ToastContainer />
+          <AuthProvider>
+            <NavigationSpinner />
+            {children}
+            <ToastContainer />
+          </AuthProvider>
         </ToastProvider>
       </body>
     </html>

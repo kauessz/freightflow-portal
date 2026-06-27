@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AxiosError } from "axios";
 import { Anchor, Loader2, Pencil, Plus } from "lucide-react";
-import api, { clearAuth, getStoredUser, isAuthenticated } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import {
   ApiError,
   PageResponse,
@@ -83,10 +85,10 @@ function formatReason(reason: string) {
     .replace(/^\w/, (char) => char.toUpperCase());
 }
 
-export default function VoyagesPage() {
+function VoyagesPageContent() {
   const { toast } = useToast();
+  const { user, logout } = useAuth();
 
-  const [mounted, setMounted] = useState(false);
   const [voyages, setVoyages] = useState<VoyageRecord[]>([]);
   const [ports, setPorts] = useState<PortRecord[]>([]);
   const [vessels, setVessels] = useState<VesselRecord[]>([]);
@@ -96,7 +98,6 @@ export default function VoyagesPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingVoyage, setEditingVoyage] = useState<VoyageRecord | null>(null);
   const [form, setForm] = useState<VoyageFormState>(EMPTY_FORM);
-  const [user, setUser] = useState(getStoredUser());
   const [readinessFilter, setReadinessFilter] = useState<ReadinessFilter>("all");
 
   const portsById = useMemo(
@@ -146,25 +147,7 @@ export default function VoyagesPage() {
   // portsById is referenced in openEditModal via closures — keep it in scope
   void portsById;
 
-  useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) {
-      window.location.href = "/login";
-      return;
-    }
-
-    const storedUser = getStoredUser();
-    setUser(storedUser);
-    if (storedUser?.role === "CLIENT") {
-      window.location.href = "/dashboard";
-      return;
-    }
-
-    loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function loadData() {
+  const loadData = useCallback(async () => {
     setLoading(true);
     try {
       const [voyagesResponse, portsResponse, vesselsResponse, readyResponse, notReadyResponse] =
@@ -210,7 +193,11 @@ export default function VoyagesPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [toast]);
+
+  useEffect(() => {
+    loadData();
+  }, [loadData]);
 
   function openCreateModal() {
     setEditingVoyage(null);
@@ -305,11 +292,10 @@ export default function VoyagesPage() {
   }
 
   function handleLogout() {
-    clearAuth();
-    window.location.href = "/login";
+    logout();
   }
 
-  if (!mounted || loading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -672,5 +658,13 @@ export default function VoyagesPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function VoyagesPage() {
+  return (
+    <RequireAuth allowedRoles={["ADMIN", "OPERATOR", "VIEWER"]}>
+      <VoyagesPageContent />
+    </RequireAuth>
   );
 }

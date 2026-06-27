@@ -1,9 +1,11 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { AxiosError } from "axios";
 import { AlertTriangle, Loader2, Pencil, Plus, Ship } from "lucide-react";
-import api, { clearAuth, getStoredUser, isAuthenticated } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import { ApiError, PageResponse, VesselRecord } from "@/types";
 import { useToast } from "@/hooks/useToast";
 import { Button } from "@/components/ui/button";
@@ -32,10 +34,10 @@ const EMPTY_FORM: VesselFormState = {
   capacityTeu: "",
 };
 
-export default function VesselsPage() {
+function VesselsPageContent() {
   const { toast } = useToast();
+  const { user, logout } = useAuth();
 
-  const [mounted, setMounted] = useState(false);
   const [vessels, setVessels] = useState<VesselRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -43,32 +45,13 @@ export default function VesselsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingVessel, setEditingVessel] = useState<VesselRecord | null>(null);
   const [form, setForm] = useState<VesselFormState>(EMPTY_FORM);
-  const [user, setUser] = useState(getStoredUser());
 
   const sortedVessels = useMemo(
     () => [...vessels].sort((a, b) => a.name.localeCompare(b.name)),
     [vessels]
   );
 
-  useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) {
-      window.location.href = "/login";
-      return;
-    }
-
-    const storedUser = getStoredUser();
-    setUser(storedUser);
-    if (storedUser?.role === "CLIENT") {
-      window.location.href = "/dashboard";
-      return;
-    }
-
-    loadVessels();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function loadVessels() {
+  const loadVessels = useCallback(async () => {
     setLoading(true);
     try {
       const response = await api.get<PageResponse<VesselRecord>>("/vessels", {
@@ -81,7 +64,11 @@ export default function VesselsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [toast]);
+
+  useEffect(() => {
+    loadVessels();
+  }, [loadVessels]);
 
   function openCreateModal() {
     setEditingVessel(null);
@@ -150,11 +137,10 @@ export default function VesselsPage() {
   }
 
   function handleLogout() {
-    clearAuth();
-    window.location.href = "/login";
+    logout();
   }
 
-  if (!mounted || loading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -394,5 +380,13 @@ export default function VesselsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function VesselsPage() {
+  return (
+    <RequireAuth allowedRoles={["ADMIN", "OPERATOR", "VIEWER"]}>
+      <VesselsPageContent />
+    </RequireAuth>
   );
 }

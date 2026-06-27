@@ -1,10 +1,12 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { PortSuggestion, searchPorts } from "@/lib/ports-data";
 import { AxiosError } from "axios";
 import { Loader2, MapPinned, Pencil, Plus } from "lucide-react";
-import api, { getStoredUser, isAuthenticated, clearAuth } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import { ApiError, PageResponse, PortRecord } from "@/types";
 import { useToast } from "@/hooks/useToast";
 import { Button } from "@/components/ui/button";
@@ -33,10 +35,10 @@ const EMPTY_FORM: PortFormState = {
   lon: "",
 };
 
-export default function PortsPage() {
+function PortsPageContent() {
   const { toast } = useToast();
+  const { user, logout } = useAuth();
 
-  const [mounted, setMounted] = useState(false);
   const [ports, setPorts] = useState<PortRecord[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -44,7 +46,6 @@ export default function PortsPage() {
   const [showModal, setShowModal] = useState(false);
   const [editingPort, setEditingPort] = useState<PortRecord | null>(null);
   const [form, setForm] = useState<PortFormState>(EMPTY_FORM);
-  const [user, setUser] = useState(getStoredUser());
   const [portSuggestions, setPortSuggestions] = useState<PortSuggestion[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -53,25 +54,7 @@ export default function PortsPage() {
     [ports]
   );
 
-  useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) {
-      window.location.href = "/login";
-      return;
-    }
-
-    const storedUser = getStoredUser();
-    setUser(storedUser);
-    if (storedUser?.role === "CLIENT") {
-      window.location.href = "/dashboard";
-      return;
-    }
-
-    loadPorts();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  async function loadPorts() {
+  const loadPorts = useCallback(async () => {
     setLoading(true);
     try {
       const response = await api.get<PageResponse<PortRecord>>("/ports", {
@@ -84,7 +67,11 @@ export default function PortsPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [toast]);
+
+  useEffect(() => {
+    loadPorts();
+  }, [loadPorts]);
 
   function openCreateModal() {
     setEditingPort(null);
@@ -153,8 +140,7 @@ export default function PortsPage() {
   }
 
   function handleLogout() {
-    clearAuth();
-    window.location.href = "/login";
+    logout();
   }
 
   function handlePortNameChange(value: string) {
@@ -178,7 +164,7 @@ export default function PortsPage() {
     setPortSuggestions([]);
   }
 
-  if (!mounted || loading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -425,5 +411,13 @@ export default function PortsPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function PortsPage() {
+  return (
+    <RequireAuth allowedRoles={["ADMIN", "OPERATOR", "VIEWER"]}>
+      <PortsPageContent />
+    </RequireAuth>
   );
 }

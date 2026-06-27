@@ -11,7 +11,8 @@ import {
   AlertTriangle,
   RefreshCw,
 } from "lucide-react";
-import api, { isAuthenticated } from "@/lib/api";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import {
   ActiveVesselWithShipmentsResponse,
   FleetMapVoyage,
@@ -184,10 +185,9 @@ function dedupeVoyagesByImo(voyages: FleetMapVoyage[]) {
   return Array.from(uniqueByImo.values());
 }
 
-export default function MapPage() {
+function MapPageContent() {
   const router = useRouter();
 
-  const [mounted, setMounted] = useState(false);
   const [activeVoyageCount, setActiveVoyageCount] = useState(0);
   const [trackingData, setTrackingData] = useState<FleetMapVoyage[]>([]);
   const [shipmentScope, setShipmentScope] = useState<ShipmentScope>("all");
@@ -242,13 +242,8 @@ export default function MapPage() {
 
   // Initial load — no auto-refresh interval (removed to avoid unnecessary Railway quota usage)
   useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) {
-      router.replace("/login");
-      return;
-    }
     fetchFleetPositions(true);
-  }, [router, fetchFleetPositions]);
+  }, [fetchFleetPositions]);
 
   function handleManualRefresh() {
     fetchFleetPositions(false);
@@ -268,152 +263,152 @@ export default function MapPage() {
   const unavailablePositions = trackingData.length - positionedVoyages;
   const degradedCount = unavailablePositions;
 
-  if (!mounted) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
-
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      {/* ── Header ── */}
-      <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-20">
-        <div className="container mx-auto flex h-16 items-center justify-between px-4">
-          {/* Left: logo + title */}
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2">
-              <Ship className="h-6 w-6 text-primary" />
-              <span className="text-xl font-bold">FreightFlow</span>
-            </div>
-            <span className="text-sm text-muted-foreground hidden sm:inline">
-              Fleet Map
-            </span>
-          </div>
-
-          {/* Right: vessel count + refresh controls + back */}
-          <div className="flex items-center gap-3">
-            <Badge className="bg-blue-100 text-blue-700 border-blue-300">
-              {positionedVoyages} tracked vessel
-              {positionedVoyages !== 1 ? "s" : ""}
-            </Badge>
-
-            {!loading && activeVoyageCount > 0 && (
-              <Badge className="bg-slate-100 text-slate-700 border-slate-300">
-              {activeVoyageCount} active voyage
-              {activeVoyageCount !== 1 ? "s" : ""}
-            </Badge>
-            )}
-
-            {!loading && degradedCount > 0 && (
-              <Badge className="bg-amber-100 text-amber-800 border-amber-300">
-                {degradedCount} degraded
-              </Badge>
-            )}
-
-            {/* FIX 2: static "Last updated" instead of countdown */}
-            {!loading && (
-              <div className="hidden sm:flex items-center gap-2">
-                {lastUpdatedAt && (
-                  <span className="flex items-center gap-1 text-xs text-muted-foreground">
-                    <RefreshCw
-                      className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
-                    />
-                    Last updated: {fmtTime(lastUpdatedAt)}
-                  </span>
-                )}
-
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={handleManualRefresh}
-                  disabled={refreshing}
-                  className="h-7 text-xs px-2"
-                >
-                  {refreshing ? (
-                    <Loader2 className="h-3 w-3 animate-spin" />
-                  ) : (
-                    "Refresh now"
-                  )}
-                </Button>
+        {/* ── Header ── */}
+        <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-20">
+          <div className="container mx-auto flex h-16 items-center justify-between px-4">
+            {/* Left: logo + title */}
+            <div className="flex items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Ship className="h-6 w-6 text-primary" />
+                <span className="text-xl font-bold">FreightFlow</span>
               </div>
-            )}
+              <span className="text-sm text-muted-foreground hidden sm:inline">
+                Fleet Map
+              </span>
+            </div>
 
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => router.push("/dashboard")}
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Dashboard
-            </Button>
+            {/* Right: vessel count + refresh controls + back */}
+            <div className="flex items-center gap-3">
+              <Badge className="bg-blue-100 text-blue-700 border-blue-300">
+                {positionedVoyages} tracked vessel
+                {positionedVoyages !== 1 ? "s" : ""}
+              </Badge>
+
+              {!loading && activeVoyageCount > 0 && (
+                <Badge className="bg-slate-100 text-slate-700 border-slate-300">
+                  {activeVoyageCount} active voyage
+                  {activeVoyageCount !== 1 ? "s" : ""}
+                </Badge>
+              )}
+
+              {!loading && degradedCount > 0 && (
+                <Badge className="bg-amber-100 text-amber-800 border-amber-300">
+                  {degradedCount} degraded
+                </Badge>
+              )}
+
+              {/* FIX 2: static "Last updated" instead of countdown */}
+              {!loading && (
+                <div className="hidden sm:flex items-center gap-2">
+                  {lastUpdatedAt && (
+                    <span className="flex items-center gap-1 text-xs text-muted-foreground">
+                      <RefreshCw
+                        className={`h-3.5 w-3.5 ${refreshing ? "animate-spin" : ""}`}
+                      />
+                      Last updated: {fmtTime(lastUpdatedAt)}
+                    </span>
+                  )}
+
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={handleManualRefresh}
+                    disabled={refreshing}
+                    className="h-7 text-xs px-2"
+                  >
+                    {refreshing ? (
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                    ) : (
+                      "Refresh now"
+                    )}
+                  </Button>
+                </div>
+              )}
+
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => router.push("/dashboard")}
+              >
+                <ArrowLeft className="h-4 w-4 mr-2" />
+                Dashboard
+              </Button>
+            </div>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* ── Error ── */}
-      {error && (
-        <div className="container mx-auto px-4 py-4">
-          <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
-            <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
-            <p className="text-sm text-destructive">{error}</p>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="ml-auto"
-              onClick={() => fetchFleetPositions(true)}
-            >
-              Retry
-            </Button>
+        {/* ── Error ── */}
+        {error && (
+          <div className="container mx-auto px-4 py-4">
+            <div className="flex items-center gap-3 rounded-lg border border-destructive/50 bg-destructive/10 p-4">
+              <AlertCircle className="h-5 w-5 text-destructive shrink-0" />
+              <p className="text-sm text-destructive">{error}</p>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="ml-auto"
+                onClick={() => fetchFleetPositions(true)}
+              >
+                Retry
+              </Button>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {!loading && degradedCount > 0 && (
-        <div className="container mx-auto px-4 pt-4">
-          <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
-            <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
-            <div className="space-y-1">
-              <p className="text-sm font-medium">
-                Fleet data loaded with degraded coverage.
-              </p>
-              <p className="text-sm">
-                {unavailablePositions > 0 &&
-                  `${unavailablePositions} vessel${unavailablePositions !== 1 ? "s" : ""} loaded without a usable position.`}
+        {!loading && degradedCount > 0 && (
+          <div className="container mx-auto px-4 pt-4">
+            <div className="flex items-start gap-3 rounded-lg border border-amber-300 bg-amber-50 p-4 text-amber-900">
+              <AlertTriangle className="h-5 w-5 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="text-sm font-medium">
+                  Fleet data loaded with degraded coverage.
+                </p>
+                <p className="text-sm">
+                  {unavailablePositions > 0 &&
+                    `${unavailablePositions} vessel${unavailablePositions !== 1 ? "s" : ""} loaded without a usable position.`}
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ── Loading (initial only) ── */}
+        {loading && (
+          <div className="flex-1 flex items-center justify-center">
+            <div className="text-center">
+              <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
+              <p className="text-sm text-muted-foreground">
+                Loading fleet positions...
               </p>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* ── Loading (initial only) ── */}
-      {loading && (
-        <div className="flex-1 flex items-center justify-center">
-          <div className="text-center">
-            <Loader2 className="h-8 w-8 animate-spin text-primary mx-auto mb-2" />
-            <p className="text-sm text-muted-foreground">
-              Loading fleet positions...
-            </p>
+        {/* ── Map ── */}
+        {!loading && (
+          <div
+            className="flex-1 relative"
+            style={{ minHeight: "calc(100vh - 68px)" }}
+          >
+            <FleetMap
+              voyages={trackingData}
+              activeVoyageCount={activeVoyageCount}
+              shipmentScope={shipmentScope}
+              onShipmentScopeChange={setShipmentScope}
+              onRefresh={handleManualRefresh}
+            />
           </div>
-        </div>
-      )}
-
-      {/* ── Map ── */}
-      {!loading && (
-        <div
-          className="flex-1 relative"
-          style={{ minHeight: "calc(100vh - 68px)" }}
-        >
-          <FleetMap
-            voyages={trackingData}
-            activeVoyageCount={activeVoyageCount}
-            shipmentScope={shipmentScope}
-            onShipmentScopeChange={setShipmentScope}
-            onRefresh={handleManualRefresh}
-          />
-        </div>
-      )}
+        )}
     </div>
+  );
+}
+
+export default function MapPage() {
+  return (
+    <RequireAuth>
+      <MapPageContent />
+    </RequireAuth>
   );
 }

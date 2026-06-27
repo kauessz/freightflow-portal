@@ -4,7 +4,8 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { AxiosError } from "axios";
 import { ArrowLeft, Loader2, AlertCircle, Plus, Ship, Building2 } from "lucide-react";
-import api, { isAuthenticated, getStoredUser } from "@/lib/api";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import { ApiError } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -24,9 +25,8 @@ interface PageMeta {
   total: number;
 }
 
-export default function CustomersPage() {
+function CustomersPageContent() {
   const router = useRouter();
-  const [mounted, setMounted] = useState(false);
   const [customers, setCustomers] = useState<CustomerItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -37,18 +37,11 @@ export default function CustomersPage() {
   const [form, setForm] = useState({ name: "", taxId: "", contactName: "", contactEmail: "" });
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
-
-  const [canEdit, setCanEdit] = useState(false);
+  const canEdit = true;
 
   useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) { router.replace("/login"); return; }
-    const stored = getStoredUser();
-    const role = stored?.role;
-    if (role !== "ADMIN" && role !== "OPERATOR") { router.replace("/dashboard"); return; }
-    setCanEdit(role === "ADMIN" || role === "OPERATOR");
     loadData();
-  }, [router]);
+  }, []);
 
   async function loadData() {
     setLoading(true);
@@ -90,7 +83,7 @@ export default function CustomersPage() {
     }
   }
 
-  if (!mounted || loading) {
+  if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -257,5 +250,13 @@ export default function CustomersPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function CustomersPage() {
+  return (
+    <RequireAuth allowedRoles={["ADMIN", "OPERATOR"]}>
+      <CustomersPageContent />
+    </RequireAuth>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
+import { useCallback, useRef, useState } from "react";
 import { AxiosError } from "axios";
 import {
   AlertCircle,
@@ -11,7 +10,9 @@ import {
   Upload,
   XCircle,
 } from "lucide-react";
-import api, { clearAuth, getStoredUser, isAuthenticated } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import { ApiError, CabotagemImportResult } from "@/types";
 import { useToast } from "@/hooks/useToast";
 import { Button } from "@/components/ui/button";
@@ -38,35 +39,19 @@ function formatBytes(bytes: number): string {
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
-export default function CabotagemImportPage() {
-  const router = useRouter();
+function CabotagemImportPageContent() {
   const { toast } = useToast();
+  const { user, logout } = useAuth();
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const [mounted, setMounted] = useState(false);
-  const [user, setUser] = useState(getStoredUser());
   const [carrier, setCarrier] = useState("");
   const [file, setFile] = useState<File | null>(null);
   const [dragging, setDragging] = useState(false);
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState<CabotagemImportResult | null>(null);
 
-  useEffect(() => {
-    setMounted(true);
-    const storedUser = getStoredUser();
-    setUser(storedUser);
-    if (!isAuthenticated()) {
-      router.replace("/login");
-      return;
-    }
-    if (storedUser?.role !== "ADMIN" && storedUser?.role !== "OPERATOR") {
-      router.replace("/dashboard");
-    }
-  }, [router]);
-
   function handleLogout() {
-    clearAuth();
-    router.replace("/login");
+    logout();
   }
 
   // ── Drag & drop ──────────────────────────────────────────────────────────────
@@ -151,14 +136,6 @@ export default function CabotagemImportPage() {
     } finally {
       setImporting(false);
     }
-  }
-
-  if (!mounted) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
   }
 
   return (
@@ -356,5 +333,13 @@ export default function CabotagemImportPage() {
         )}
       </main>
     </div>
+  );
+}
+
+export default function CabotagemImportPage() {
+  return (
+    <RequireAuth allowedRoles={["ADMIN", "OPERATOR"]}>
+      <CabotagemImportPageContent />
+    </RequireAuth>
   );
 }

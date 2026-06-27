@@ -17,7 +17,9 @@ import {
   AlertTriangle,
   Filter,
 } from "lucide-react";
-import api, { getStoredUser, clearAuth, isAuthenticated } from "@/lib/api";
+import RequireAuth from "@/components/require-auth";
+import { useAuth } from "@/components/auth-provider";
+import api from "@/lib/api";
 import {
   Shipment,
   OperationsDashboardStats,
@@ -194,6 +196,7 @@ function riskBadge(level: string | null) {
 function DashboardContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
+  const { user } = useAuth();
 
   // ── Derive filters from URL ──
   const bookingParam = searchParams.get("booking") || "";
@@ -205,9 +208,6 @@ function DashboardContent() {
   const pageParam = parseInt(searchParams.get("page") || "0", 10);
 
   // ── Local state ──
-  const [mounted, setMounted] = useState(false);
-  const [user, setUser] = useState<ReturnType<typeof getStoredUser>>(null);
-
   // Search input (controlled, syncs with bookingParam)
   const [searchInput, setSearchInput] = useState(bookingParam);
   useEffect(() => {
@@ -305,30 +305,12 @@ function DashboardContent() {
 
   // ── Effects ──
   useEffect(() => {
-    setMounted(true);
-    setUser(getStoredUser());
-    if (!isAuthenticated()) {
-      router.replace("/login");
-    }
-  }, [router]);
-
-  useEffect(() => {
-    if (!mounted || !isAuthenticated()) return;
     fetchAnalytics();
-  }, [mounted, fetchAnalytics]);
+  }, [fetchAnalytics]);
 
   useEffect(() => {
-    if (!mounted || !isAuthenticated()) return;
     fetchShipments();
-  }, [mounted, fetchShipments]);
-
-  if (!mounted) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-background">
-        <Loader2 className="h-8 w-8 animate-spin text-primary" />
-      </div>
-    );
-  }
+  }, [fetchShipments]);
 
   // ── URL filter helpers ──
   function updateParam(key: string, value: string) {
@@ -377,11 +359,6 @@ function DashboardContent() {
         break;
     }
     router.replace(`/dashboard?${params.toString()}`);
-  }
-
-  function handleLogout() {
-    clearAuth();
-    router.replace("/login");
   }
 
   async function openModal() {
@@ -522,7 +499,7 @@ function DashboardContent() {
 
   return (
     <div className="min-h-screen bg-background">
-      <PortalHeader user={user} onLogout={handleLogout} activePath="/dashboard" />
+      <PortalHeader user={user} activePath="/dashboard" />
 
       <main className="container mx-auto px-4 py-8">
         {/* ── Header ── */}
@@ -1421,7 +1398,9 @@ export default function DashboardPage() {
         </div>
       }
     >
-      <DashboardContent />
+      <RequireAuth>
+        <DashboardContent />
+      </RequireAuth>
     </Suspense>
   );
 }

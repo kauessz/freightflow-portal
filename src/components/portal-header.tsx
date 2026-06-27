@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import { Building2, Map, Package, Ship, Users, Container } from "lucide-react";
+import { useAuth } from "@/components/auth-provider";
 import { AuthUserInfo } from "@/types";
 import { Button } from "@/components/ui/button";
 
@@ -22,6 +23,10 @@ export default function PortalHeader({
   onLogout,
   activePath,
 }: PortalHeaderProps) {
+  const auth = useAuth();
+  const effectiveUser = user ?? auth.user;
+  const effectiveLogout = onLogout ?? (() => auth.logout());
+
   const links = useMemo(() => {
     const baseLinks = [
       { href: "/dashboard", label: "Shipments", icon: Package, show: true },
@@ -33,24 +38,24 @@ export default function PortalHeader({
         href: "/dashboard/cabotagem/import",
         label: "Cabotagem",
         icon: Container,
-        show: user?.role === "ADMIN" || user?.role === "OPERATOR",
+        show: effectiveUser?.role === "ADMIN" || effectiveUser?.role === "OPERATOR",
       },
       {
         href: "/dashboard/customers",
         label: "Customers",
         icon: Building2,
-        show: user?.role !== "CLIENT",
+        show: effectiveUser?.role !== "CLIENT",
       },
       {
         href: "/dashboard/users",
         label: "Users",
         icon: Users,
-        show: user?.role === "ADMIN",
+        show: effectiveUser?.role === "ADMIN",
       },
     ];
 
     return baseLinks.filter((link) => link.show);
-  }, [user]);
+  }, [effectiveUser]);
 
   return (
     <header className="border-b bg-background/95 backdrop-blur supports-[backdrop-filter]:bg-background/60 sticky top-0 z-20">
@@ -84,13 +89,14 @@ export default function PortalHeader({
         </nav>
 
         <div className="flex items-center gap-3">
-          {user && (
+          {effectiveUser && (
             <span className="hidden xl:inline text-sm text-muted-foreground">
-              {user.name} · <span className="text-xs font-medium">{user.role}</span>
+              {effectiveUser.name} ·{" "}
+              <span className="text-xs font-medium">{effectiveUser.role}</span>
             </span>
           )}
-          {onLogout && (
-            <Button variant="ghost" size="sm" onClick={onLogout}>
+          {(onLogout || auth.isAuthenticated) && (
+            <Button variant="ghost" size="sm" onClick={effectiveLogout}>
               Sign out
             </Button>
           )}

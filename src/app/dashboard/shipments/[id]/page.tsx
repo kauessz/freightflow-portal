@@ -18,7 +18,9 @@ import {
   Trash2,
   Plus,
 } from "lucide-react";
-import api, { isAuthenticated, getStoredUser } from "@/lib/api";
+import { useAuth } from "@/components/auth-provider";
+import RequireAuth from "@/components/require-auth";
+import api from "@/lib/api";
 import {
   ApiError,
   TrackingEvent,
@@ -183,15 +185,14 @@ function formatBytes(bytes: number): string {
 
 // ─── Page component ───────────────────────────────────────────────────────────
 
-export default function ShipmentDetailPage() {
+function ShipmentDetailPageContent() {
   const params = useParams();
   const router = useRouter();
   const id = params.id as string;
   const { toast } = useToast();
+  const { user } = useAuth();
   const uploadFileInputRef = useRef<HTMLInputElement>(null);
 
-  const [mounted, setMounted] = useState(false);
-  const [user] = useState(getStoredUser());
   const [shipment, setShipment] = useState<Shipment | null>(null);
   const [events, setEvents] = useState<TrackingEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -255,14 +256,9 @@ export default function ShipmentDetailPage() {
   }, [id]);
 
   useEffect(() => {
-    setMounted(true);
-    if (!isAuthenticated()) {
-      router.replace("/login");
-      return;
-    }
     fetchData();
     fetchDocuments();
-  }, [fetchData, fetchDocuments, router]);
+  }, [fetchData, fetchDocuments]);
 
   // ── Edit modal ─────────────────────────────────────────────────────────────
 
@@ -373,7 +369,7 @@ export default function ShipmentDetailPage() {
   // ── Render guards ──────────────────────────────────────────────────────────
 
   // Only show full-page spinner on the very first load (no data yet)
-  if (!mounted || (loading && !shipment)) {
+  if (loading && !shipment) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-background">
         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -1122,5 +1118,13 @@ export default function ShipmentDetailPage() {
         </div>
       )}
     </div>
+  );
+}
+
+export default function ShipmentDetailPage() {
+  return (
+    <RequireAuth>
+      <ShipmentDetailPageContent />
+    </RequireAuth>
   );
 }
